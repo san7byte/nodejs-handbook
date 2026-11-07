@@ -1,394 +1,290 @@
 # Process & Environment
 
-> Objek `process` menyediakan kontrol global terhadap eksekusi runtime Node.js, pembacaan variabel lingkungan (`env`), manipulasi argumen CLI (`argv`), metrik telemetri proses, serta penanganan sinyal terminasi sistem operasi.
+> Mengelola siklus hidup proses Node.js, membaca konfigurasi environment, menangani argumen CLI, serta memantau kesehatan runtime aplikasi.
 
-## Core Concepts
+## Kenapa Perlu?
 
-- `process` adalah objek global bawaan; disarankan mengimpor via `import process from 'node:process'` untuk kepatuhan standar ESM.
-- `process.env` menyimpan variabel lingkungan sistem sebagai pasangan key-value yang seluruh nilainya bertipe string.
-- Node.js versi 20.6+ menyediakan flag native `--env-file=.env` (dan fungsi programatik `process.loadEnvFile()` di v20.12+) untuk memuat berkas konfigurasi tanpa dependensi library luar.
-- `process.argv` menyimpan argumen baris perintah dalam array string, di mana argumen pengguna dimulai dari indeks ke-2.
-- Tangani sinyal `SIGINT` dan `SIGTERM` agar server menutup koneksi secara bersih (*graceful shutdown*) sebelum proses berhenti.
-- Terapkan validasi *fail-fast* saat startup: hentikan proses sedini mungkin (`process.exitCode = 1`) jika konfigurasi wajib tidak valid daripada menelan kesalahan dengan nilai default diam-diam.
-- *Graceful shutdown* wajib memiliki batas waktu paksa (*force exit timeout* dengan `.unref()`): cegah proses menggantung tanpa batas sebelum dihentikan paksa oleh orchestrator (`SIGKILL`).
+Aplikasi backend membutuhkan konfigurasi dinamis (seperti port server dan kredensial database) yang berbeda di setiap lingkungan deployment. Tanpa modul `process`, kita tidak bisa membaca variabel lingkungan sistem, memproses argumen baris perintah, atau menangani sinyal terminasi server dengan aman. Modul ini menyediakan kontrol penuh terhadap proses Node.js yang sedang berjalan.
 
-## Referensi
+## Konsep Inti
 
-Daftar API dan properti proses yang sering digunakan:
+- `process` adalah objek global bawaan Node.js, disarankan diimpor eksplisit via `import process from 'node:process'`.
+- `process.env` menyimpan semua environment variable sistem dan seluruh nilainya bertipe `string`.
+- `process.loadEnvFile()` memuat file `.env` secara native tanpa memerlukan library pihak ketiga (Node.js v20.12+).
+- `process.argv` menyimpan argumen baris perintah dalam bentuk array, dengan argumen pengguna dimulai dari indeks ke-2.
+- `process.exitCode` mengatur status keluar proses secara alami tanpa memutus antrean event loop seketika.
 
-| API / Fitur | Fungsi |
-|---|---|
-| `process.env` | Objek kamus variabel lingkungan sistem operasi yang aktif |
-| `process.loadEnvFile(path?)` | Memuat berkas `.env` ke `process.env` secara programatik (Node.js v20.12.0+) |
-| `process.argv` | Array argumen baris perintah mentah yang diteruskan saat proses dijalankan |
-| `process.exit(code?)` | Menghentikan proses Node.js seketika dengan kode status tertentu |
-| `process.exitCode` | Mengatur kode status keluar tanpa menghentikan paksa event loop |
-| `process.on(event, listener)` | Mendaftarkan listener untuk siklus hidup proses atau sinyal sistem operasi |
-| `process.memoryUsage()` | Mengembalikan metrik penggunaan memori proses (RSS, heap, buffer) dalam bytes |
-| `process.uptime()` | Mengembalikan durasi waktu berjalan proses Node.js dalam satuan detik |
-| `process.hrtime.bigint()` | Mengukur interval waktu resolusi tinggi berpresisi nanodetik untuk benchmark |
-| `uncaughtException` | Event penanganan error fatal JavaScript yang tidak tertangkap di event loop |
-| `unhandledRejection` | Event penanganan Promise yang di-reject tanpa blok catch |
+## Langkah 1: Membaca Environment Variables
 
-### `process.env`
+Kita membaca konfigurasi aplikasi dari variabel lingkungan sistem menggunakan objek `process.env` dan menangani variabel yang belum diset atau bernilai tidak valid.
 
-Properti objek ini memuat seluruh variabel lingkungan yang disuntikkan oleh sistem operasi atau argumen konfigurasi.
-
-- Tidak menerima argumen pemanggilan fungsi (merupakan objek properti global).
-- **Type:** `Record<string, string | undefined>`, kamus nilai konfigurasi lingkungan runtime.
+Buat file `env.mjs`.
 
 ```js
 import process from 'node:process';
 
-const port = Number(process.env.PORT) || 3000;
-const isProd = process.env.NODE_ENV === 'production';
-console.log('Port configured:', port);
-// Output: Port configured: 3000
-console.log('Production mode:', isProd);
-// Output: Production mode: false
+// Normal: read existing variable with fallback
+const nodeEnv = process.env.NODE_ENV || 'development';
+
+// Edge-case: missing variable and strict type validation
+const rawPort = process.env.PORT;
+const port = Number(rawPort);
+const isPortValid = Number.isInteger(port) && port >= 1 && port <= 65535;
+
+console.log('Environment:', nodeEnv);
+console.log('Raw PORT is undefined:', rawPort === undefined);
+console.log('Fallback PORT valid:', isPortValid ? port : 3000);
 ```
 
-### `process.loadEnvFile(path?)`
+Jalankan file:
 
-Fungsi ini (Node.js v20.12.0+) memuat berkas konfigurasi `.env` secara programatik langsung ke dalam `process.env`. Gunakan flag CLI `--env-file` jika konfigurasi dibutuhkan sejak awal pemuatan modul, atau gunakan `process.loadEnvFile()` jika lokasi berkas baru ditentukan secara dinamis saat runtime.
+```bash
+node env.mjs
+```
 
-- `path` (string | URL | Buffer, opsional, default `'./.env'`): lokasi berkas `.env` yang akan dibaca.
-- **Returns:** `void`, variabel langsung disuntikkan ke kamus `process.env`.
+Output:
+
+```
+Environment: development
+Raw PORT is undefined: true
+Fallback PORT valid: 3000
+```
+
+Properti `process.env` memuat semua variabel lingkungan sistem sebagai string. Pada kondisi edge-case di mana variabel belum didefinisikan (`undefined`) atau bertipe string kosong, kita wajib menyediakan nilai cadangan (*fallback*) dan memvalidasi tipe data sebelum digunakan oleh server.
+
+## Langkah 2: Memuat File .env Secara Programatik
+
+Kita memuat variabel konfigurasi dari file `.env` langsung ke `process.env` tanpa library eksternal dan menangani error jika berkas konfigurasi tidak ditemukan.
+
+Buat file `.env`:
+
+```
+DATABASE_URL=postgres://localhost:5432/app
+```
+
+Lalu buat file `load-env.mjs`.
 
 ```js
 import process from 'node:process';
-import fs from 'node:fs';
 
-fs.writeFileSync('.env.sample', 'APP_NAME=Handbook\n');
-process.loadEnvFile('.env.sample');
-console.log('App name:', process.env.APP_NAME);
-// Output: App name: Handbook
-fs.unlinkSync('.env.sample');
+// Normal: load default .env file
+process.loadEnvFile();
+console.log('Database URL:', process.env.DATABASE_URL);
+
+// Edge-case: handle missing custom file safely
+try {
+  process.loadEnvFile('.env.missing');
+} catch (err) {
+  console.log('Caught missing file error:', err.code);
+}
 ```
 
-### `process.argv`
+Jalankan file:
 
-Properti array ini menampung seluruh argumen baris perintah mentah yang diketikkan pengguna saat mengeksekusi script.
+```bash
+node load-env.mjs
+```
 
-- Tidak menerima argumen pemanggilan fungsi (merupakan array string global).
-- **Type:** `string[]`, indeks 0 adalah binary node, indeks 1 adalah lokasi file script, dan indeks 2 ke atas adalah argumen kiriman pengguna.
+Output:
+
+```
+Database URL: postgres://localhost:5432/app
+Caught missing file error: ENOENT
+```
+
+Method `process.loadEnvFile()` membaca file `.env` dari direktori kerja aktif dan menyuntikkannya ke `process.env`. Jika path file yang dicari tidak tersedia di sistem berkas, Node.js melempar error dengan kode `ENOENT` yang perlu ditangkap dengan blok `try...catch`.
+
+## Langkah 3: Membaca dan Memvalidasi Argumen CLI
+
+Kita membaca argumen baris perintah dari `process.argv` dan mendeteksi kondisi edge-case saat flag diberikan tanpa menyertakan nilai.
+
+Buat file `args.mjs`.
 
 ```js
 import process from 'node:process';
 
 const userArgs = process.argv.slice(2);
-console.log('Arguments passed:', Array.isArray(userArgs));
-// Output: Arguments passed: true
+const portIndex = userArgs.indexOf('--port');
+const portValue = portIndex !== -1 ? userArgs[portIndex + 1] : undefined;
+
+// Edge-case: flag exists but value is missing or another flag
+const hasValue = portValue !== undefined && !portValue.startsWith('--');
+const parsedPort = hasValue ? Number(portValue) : null;
+const isValid = parsedPort !== null && Number.isInteger(parsedPort);
+
+console.log('User args:', userArgs);
+console.log('Port value provided:', hasValue);
+console.log('Resolved port:', isValid ? parsedPort : 3000);
 ```
 
-> Untuk parsing argumen CLI bertipe flag (`--port 8080`, `--dev`) secara aman tanpa bergantung pada urutan posisi, gunakan `util.parseArgs` dari `node:util` — dibahas tuntas di [Bab 12 - Util & OS](../12-util-os/README.md).
+Jalankan file dengan flag tanpa nilai:
 
-### `process.exit(code?)`
+```bash
+node args.mjs --port
+```
 
-Fungsi ini mematikan proses Node.js secara instan tanpa menunggu antrean event loop diselesaikan.
+Output:
 
-- `code` (number, opsional, default `0`): kode status keluar OS (nilai `0` untuk sukses, selain `0` untuk kegagalan).
-- **Returns:** `never`, langsung mematikan eksekusi runtime sistem operasi.
+```
+User args: [ '--port' ]
+Port value provided: false
+Resolved port: 3000
+```
+
+Dua indeks pertama `process.argv` selalu berisi path binary `node` dan path file script. Saat pengguna hanya menuliskan `--port` tanpa nilai berikutnya di terminal, logika pemotongan array mendeteksi bahwa nilai tidak tersedia sehingga aplikasi aman menggunakan fallback port default `3000`.
+
+## Langkah 4: Mengatur Status Keluar Proses
+
+Kita mengatur status keluar proses menggunakan `process.exitCode` untuk kegagalan yang dapat ditoleransi dan `process.exit()` untuk kondisi error fatal darurat.
+
+Buat file `exit.mjs`.
 
 ```js
 import process from 'node:process';
 
-// Exit with success code 0
-process.exit(0);
-// Output: process terminates immediately with code 0
+function shutdown(hasFatalCrash) {
+  if (hasFatalCrash) {
+    console.error('Fatal crash: emergency exit immediately');
+    process.exit(1); // Terminates immediately, skipping pending tasks
+  }
+
+  console.warn('Recoverable validation error: setting exitCode');
+  process.exitCode = 1; // Allows async operations or event loop to finish cleanly
+}
+
+// Edge-case test: recoverable error allows loop to exit naturally
+shutdown(false);
+console.log('Event loop still alive. ExitCode:', process.exitCode);
 ```
 
-### `process.exitCode`
+Jalankan file:
 
-Properti ini menentukan kode status keluar OS yang akan dipakai ketika event loop Node.js selesai secara alami.
+```bash
+node exit.mjs
+```
 
-- Tidak menerima argumen pemanggilan fungsi (merupakan properti getter/setter angka).
-- **Type:** `number | undefined`, default bernilai `undefined` (keluar dengan kode `0` jika tidak ada error tak tertangani).
+Output:
+
+```
+Recoverable validation error: setting exitCode
+Event loop still alive. ExitCode: 1
+```
+
+Mengatur `process.exitCode = 1` memastikan sistem operasi menerima kode status error tanpa menghentikan paksa operasi asynchronous yang sedang berjalan. Sebaliknya, `process.exit(1)` adalah mekanisme darurat (*emergency brake*) yang mematikan proses saat itu juga sehingga operasi I/O yang tertunda akan terputus.
+
+## Langkah 5: Memantau Metrik Runtime dan Benchmark
+
+Kita memantau alokasi memori proses, waktu aktif runtime, dan mengukur durasi eksekusi dengan resolusi tinggi menggunakan `hrtime.bigint()`.
+
+Buat file `metrics.mjs`.
 
 ```js
 import process from 'node:process';
 
-process.exitCode = 1;
-console.log('Exit code set:', process.exitCode);
-// Output: Exit code set: 1
-```
-
-### `process.on(event, listener)`
-
-Fungsi ini mendaftarkan callback penangan event siklus hidup runtime atau sinyal POSIX sistem operasi.
-
-- `event` (string | symbol, wajib): nama kejadian atau sinyal OS (misalnya `'SIGINT'`, `'SIGTERM'`).
-- `listener` ((...args: any[]) => void, wajib): fungsi callback yang dipanggil saat sinyal atau event diterima.
-- **Returns:** `NodeJS.Process`, instance objek proses saat ini untuk pemanggilan berantai (*method chaining*).
-
-```js
-import process from 'node:process';
-
-process.on('SIGINT', (signal) => {
-  console.log(`Received signal: ${signal}`);
-  // Output: Received signal: SIGINT
-});
-process.emit('SIGINT', 'SIGINT');
-```
-
-### `process.memoryUsage()`
-
-Fungsi ini mengembalikan rincian metrik alokasi memori yang dipakai proses Node.js dalam satuan byte.
-
-- Tidak menerima argumen.
-- **Returns:** `object`, berisi properti `rss` (Resident Set Size), `heapTotal` (total alokasi heap V8), `heapUsed` (heap terpakai), `external` (memori C++ terikat V8), dan `arrayBuffers`.
-
-```js
-import process from 'node:process';
-
+// 1. Memory and uptime metrics
 const mem = process.memoryUsage();
-console.log('Heap used exists:', typeof mem.heapUsed === 'number');
-// Output: Heap used exists: true
-console.log('RSS is positive:', mem.rss > 0);
-// Output: RSS is positive: true
-```
-
-### `process.uptime()`
-
-Fungsi ini mengembalikan durasi waktu berjalan proses Node.js dalam satuan detik.
-
-- Tidak menerima argumen.
-- **Returns:** `number`, total durasi detik sejak proses dimulai (termasuk nilai pecahan desimal).
-
-```js
-import process from 'node:process';
-
 const uptime = process.uptime();
+console.log('Heap used exists:', typeof mem.heapUsed === 'number');
 console.log('Uptime is number:', typeof uptime === 'number');
-// Output: Uptime is number: true
-console.log('Uptime non-negative:', uptime >= 0);
-// Output: Uptime non-negative: true
-```
 
-### `process.hrtime.bigint()`
-
-Fungsi ini (Node.js v10.7.0+) menghasilkan timestamp monotonic berpresisi tinggi dalam satuan nanodetik (`bigint`) untuk benchmark dan pengukuran durasi komputasi.
-
-- Tidak menerima argumen.
-- **Returns:** `bigint`, waktu resolusi tinggi sistem dalam nanodetik.
-
-```js
-import process from 'node:process';
-
+// 2. High-resolution benchmark with threshold detection (edge-case)
 const start = process.hrtime.bigint();
-const elapsed = process.hrtime.bigint() - start;
-console.log('Elapsed is bigint:', typeof elapsed === 'bigint');
-// Output: Elapsed is bigint: true
-console.log('Elapsed non-negative:', elapsed >= 0n);
-// Output: Elapsed non-negative: true
+
+// Simulate workload
+for (let i = 0; i < 500_000; i++) Math.sqrt(i);
+
+const elapsedNs = process.hrtime.bigint() - start;
+const elapsedMs = Number(elapsedNs) / 1_000_000;
+const isTooSlow = elapsedMs > 200; // Edge-case threshold warning
+
+console.log('Elapsed ms is positive:', elapsedMs > 0);
+console.log('Exceeded 200ms threshold:', isTooSlow);
 ```
 
-### `process.on('uncaughtException', listener)`
+Jalankan file:
 
-Event ini dipancarkan ketika terjadi exception JavaScript sinkron yang tidak tertangkap oleh blok `try...catch` dan naik hingga ke pucuk event loop.
+```bash
+node metrics.mjs
+```
 
-- `event` (string, wajib): nama event `'uncaughtException'`.
-- `listener` ((err: Error, origin: string) => void, wajib): callback penanganan dengan parameter `err` (objek Error penyebab exception) dan `origin` (`'uncaughtException'` atau `'unhandledRejection'`).
-- **Returns:** `NodeJS.Process`, instance objek proses aktif.
+Output:
+
+```
+Heap used exists: true
+Uptime is number: true
+Elapsed ms is positive: true
+Exceeded 200ms threshold: false
+```
+
+Method `process.memoryUsage()` dan `process.uptime()` memantau kondisi kesehatan runtime. Sementara itu, `process.hrtime.bigint()` mengembalikan waktu berpresisi nanodetik yang monotonic (bebas dari penyesuaian jam sistem operasi) sehingga akurat untuk mendeteksi operasi yang melebihi batas durasi aman (*threshold*).
+
+## Langkah 6: Menangani Sinyal dan Lifecycle Event
+
+Kita mendaftarkan penangan sinyal sistem operasi dan menangkap kejadian fatal tak tertangani (*unhandled events*) agar aplikasi tidak crash tanpa catatan log.
+
+Buat file `events.mjs`.
 
 ```js
 import process from 'node:process';
 
-process.on('uncaughtException', (err, origin) => {
-  console.log('Caught exception:', err.message);
-  // Output: Caught exception: Database crashed
-  console.log('Exception origin:', origin);
-  // Output: Exception origin: uncaughtException
+// 1. Handling POSIX signal
+process.on('SIGINT', (signal) => {
+  console.log('Received signal:', signal);
 });
 
-process.emit('uncaughtException', new Error('Database crashed'), 'uncaughtException');
-```
-
-### `process.on('unhandledRejection', listener)`
-
-Event ini dipancarkan ketika sebuah `Promise` di-reject dan tidak memiliki penangan `.catch()` atau penolakan dalam satu putaran event loop.
-
-- `event` (string, wajib): nama event `'unhandledRejection'`.
-- `listener` ((reason: any, promise: Promise) => void, wajib): callback penanganan dengan parameter `reason` (alasan rejection, umumnya berupa objek Error) dan `promise` (objek Promise yang mengalami rejection).
-- **Returns:** `NodeJS.Process`, instance objek proses aktif.
-
-```js
-import process from 'node:process';
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.log('Unhandled reason:', reason.message);
-  // Output: Unhandled reason: Network timeout
-  console.log('Promise is valid:', promise instanceof Promise);
-  // Output: Promise is valid: true
+// 2. Edge-case: intercepting unhandled Promise rejection
+process.on('unhandledRejection', (reason) => {
+  console.error('Handled unhandledRejection safely:', reason.message);
+  process.exitCode = 1;
 });
 
-const rejectedPromise = Promise.reject(new Error('Network timeout'));
-process.emit('unhandledRejection', new Error('Network timeout'), rejectedPromise);
+// Test signal
+process.emit('SIGINT', 'SIGINT');
+
+// Test edge-case rejection
+const rejectedPromise = Promise.reject(new Error('Database connection failed'));
+process.emit('unhandledRejection', new Error('Database connection failed'), rejectedPromise);
 rejectedPromise.catch(() => {});
 ```
 
-## Examples
+Jalankan file:
 
-### 1. Membaca Environment dan Argumen CLI
-
-Membaca variabel lingkungan runtime dan argumen baris perintah mentah dari `process.argv`. Untuk parsing argumen bertipe flag yang lebih terstruktur, lihat `util.parseArgs` di [Bab 12 - Util & OS](../12-util-os/README.md).
-
-```js title="src/process.mjs"
-// run: node src/process.mjs --port 8080
-import process from 'node:process';
-
-const userArgs = process.argv.slice(2);
-const env = process.env.NODE_ENV || 'development';
-
-console.log('PID is number:', typeof process.pid === 'number');
-// Output: PID is number: true
-console.log('Platform:', process.platform);
-// Output: Platform: linux
-console.log('Raw Arguments:', userArgs);
-// Output: Raw Arguments: [ '--port', '8080' ]
-console.log('Environment:', env);
-// Output: Environment: development
+```bash
+node events.mjs
 ```
 
-### 2. Validasi Konfigurasi Startup (Fail-Fast Pattern)
+Output:
 
-Memvalidasi konfigurasi runtime saat aplikasi pertama kali boot. Pola umum seperti `Number(x) || 3000` sangat berbahaya karena menelan nilai salah secara diam-diam (misalnya `PORT=0` atau `PORT=abc` yang keliru otomatis fallback ke `3000` tanpa disadari). Validasi ketat mengumpulkan semua kesalahan lalu menghentikan proses sedini mungkin.
-
-```js title="src/config.mjs"
-// run: node src/config.mjs
-import process from 'node:process';
-
-function loadConfig(env = process.env) {
-  const errors = [];
-
-  // 1. Mandatory variable
-  if (!env.DATABASE_URL || env.DATABASE_URL.trim() === '') {
-    errors.push('DATABASE_URL is required but missing');
-  }
-
-  // 2. Whitelist validation
-  const allowedEnvs = ['development', 'production', 'test'];
-  const nodeEnv = env.NODE_ENV || 'development';
-  if (!allowedEnvs.includes(nodeEnv)) {
-    errors.push(`NODE_ENV must be one of [${allowedEnvs.join(', ')}], received '${nodeEnv}'`);
-  }
-
-  // 3. Strict port validation
-  let port = 3000;
-  if (env.PORT !== undefined) {
-    const parsed = Number(env.PORT);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-      errors.push(`PORT must be an integer (1-65535), received '${env.PORT}'`);
-    } else {
-      port = parsed;
-    }
-  }
-
-  if (errors.length > 0) {
-    console.error('Configuration validation failed:');
-    for (const err of errors) {
-      console.error(`- ${err}`);
-    }
-    process.exitCode = 1;
-    return null;
-  }
-
-  return { port, nodeEnv, databaseUrl: env.DATABASE_URL };
-}
-
-const config = loadConfig({
-  PORT: '8080',
-  NODE_ENV: 'production',
-  DATABASE_URL: 'postgres://localhost:5432/db',
-});
-console.log('Config loaded successfully:', config !== null);
-// Output: Config loaded successfully: true
-
-const invalidConfig = loadConfig({ PORT: 'invalid_port' });
-console.log('Invalid config blocked:', invalidConfig === null && process.exitCode === 1);
-// Output: Invalid config blocked: true
+```
+Received signal: SIGINT
+Handled unhandledRejection safely: Database connection failed
 ```
 
-### 3. Memantau Metrik Proses (Memory, Uptime, Durasi)
+Method `process.on()` mendaftarkan callback untuk sinyal sistem operasi seperti `SIGINT` (Ctrl+C). Event `unhandledRejection` berfungsi sebagai jaring pengaman terakhir untuk menangkap Promise yang gagal dieksekusi tanpa blok `.catch()`, mencatat diagnostik error, dan menandai `process.exitCode = 1`.
 
-Menggunakan `process.memoryUsage()`, `process.uptime()`, dan `process.hrtime.bigint()` untuk mencetak snapshot kesehatan proses dan mengukur durasi eksekusi komputasi.
+## Referensi API
 
-```js title="src/process-info.mjs"
-// run: node src/process-info.mjs
-import process from 'node:process';
+| API | Fungsi |
+|---|---|
+| `process.env` | Objek kamus variabel lingkungan sistem operasi. |
+| `process.loadEnvFile(path?)` | Memuat file `.env` ke `process.env`. `path` (string, opsional, default: `'.env'`). Returns `void`. |
+| `process.argv` | Array argumen baris perintah. `[0]` path binary node, `[1]` path script, `[2..]` argumen pengguna. Returns `string[]`. |
+| `process.exitCode` | Mengatur exit code proses saat event loop selesai. `number`, default `0`. |
+| `process.exit(code?)` | Menghentikan proses seketika. `code` (number, opsional, default `0`). Returns `never`. |
+| `process.memoryUsage()` | Mengembalikan statistik memori proses (RSS, heapTotal, heapUsed, external). Returns `object`. |
+| `process.uptime()` | Mengembalikan durasi proses berjalan dalam detik. Returns `number`. |
+| `process.hrtime.bigint()` | Mengukur waktu resolusi tinggi dalam nanodetik untuk benchmark. Returns `bigint`. |
+| `process.on(event, listener)` | Mendaftarkan listener event atau sinyal OS. `event` (string, wajib), `listener` (function, wajib). Returns `process`. |
 
-console.log('PID:', process.pid);
-// Output: PID: <number>
-console.log('Platform:', process.platform);
-// Output: Platform: linux
-console.log('Node.js Version:', process.version);
-// Output: Node.js Version: v24.15.0
+## Kasus di Aplikasi
 
-const memory = process.memoryUsage();
-console.log('RSS (MB):', (memory.rss / 1024 / 1024).toFixed(2));
-// Output: RSS (MB): 46.30
-console.log('Heap Used (MB):', (memory.heapUsed / 1024 / 1024).toFixed(2));
-// Output: Heap Used (MB): 4.70
+Di backend, penanganan sinyal terminasi sistem operasi wajib diterapkan saat aplikasi dideploy di container (seperti Docker atau Kubernetes) agar proses dapat menyelesaikan request yang sedang berjalan sebelum dimatikan.
 
-console.log('Uptime (s):', process.uptime().toFixed(2));
-// Output: Uptime (s): 0.18
+**Masalah:** Saat container di-deploy ulang atau dihentikan, proses menerima sinyal `SIGTERM`. Jika sinyal tidak ditangani, koneksi HTTP aktif akan terputus paksa sehingga client menerima error 502 Bad Gateway.
 
-const start = process.hrtime.bigint();
-for (let i = 0; i < 1_000_000; i++) Math.sqrt(i);
-const duration = Number(process.hrtime.bigint() - start) / 1_000_000;
-console.log('Execution duration (ms):', duration.toFixed(2));
-// Output: Execution duration (ms): 50.25
-```
+**Solusi:** Pasang listener `SIGTERM` dan `SIGINT` untuk menutup server HTTP dengan `server.close()`, selesaikan request aktif, dan sediakan timeout penghenti paksa jika cleanup menggantung.
 
-### 4. Health Check Monitor dengan Penanganan Sinyal
-
-Memonitor memori dan uptime secara periodik sambil menangani `SIGINT`, `uncaughtException`, dan `unhandledRejection` agar proses bisa dihentikan dengan bersih atau dicatat sebelum crash.
-
-```js title="src/process-monitor.mjs"
-// run: node src/process-monitor.mjs
-import process from 'node:process';
-
-function monitorMemory() {
-  const memory = process.memoryUsage();
-  console.log('RSS (MB):', (memory.rss / 1024 / 1024).toFixed(2));
-  console.log('Heap Used (MB):', (memory.heapUsed / 1024 / 1024).toFixed(2));
-  console.log('Uptime (s):', process.uptime().toFixed(2));
-}
-
-const monitor = setInterval(monitorMemory, 1000);
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received. Stopping monitor...');
-  // Output: SIGINT received. Stopping monitor...
-  clearInterval(monitor);
-  process.exitCode = 0;
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('Fatal crash, shutting down:', err.message);
-  clearInterval(monitor);
-  process.exitCode = 1;
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', reason.message);
-  clearInterval(monitor);
-  process.exitCode = 1;
-});
-
-console.log('Monitor started. Press Ctrl+C to stop.');
-// Output: Monitor started. Press Ctrl+C to stop.
-```
-
-## Real-World Use Case
-
-**Backend**
-
-**Masalah:** saat container Docker di-deploy ulang atau dimatikan (`SIGTERM`), koneksi HTTP aktif dan transaksi database terputus paksa sehingga data corrupt dan user menerima error 502 Bad Gateway.
-**Solusi:** pasang handler sinyal dengan guard proteksi eksekusi ganda, hentikan penerimaan koneksi baru via `server.close()`, selesaikan transaksi aktif dengan timeout fallback (`.unref()`), dan biarkan proses keluar alami dengan `process.exitCode = 0`.
-
-```js title="src/shutdown.mjs"
-// run: node src/shutdown.mjs
+```js
 import http from 'node:http';
 import process from 'node:process';
 
@@ -397,41 +293,24 @@ const server = http.createServer((req, res) => {
   res.end('Server ready');
 });
 
-async function closeDatabase() {
-  // Simulate draining active database connection pools
-  return new Promise((resolve) => setTimeout(resolve, 50));
-}
-
 let isShuttingDown = false;
 
 function setupGracefulShutdown(server) {
-  async function shutdown(signal) {
+  function shutdown(signal) {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
-    console.log(`Received ${signal}. Starting graceful shutdown...`);
+    console.log(`Received ${signal}. Closing server...`);
 
-    // Force exit timer if cleanup hangs beyond orchestrator grace period
-    const forceExitTimer = setTimeout(() => {
-      console.error('Shutdown timed out. Forcing process termination.');
+    const forceTimer = setTimeout(() => {
+      console.error('Force shutdown after timeout.');
       process.exit(1);
     }, 5000);
-    forceExitTimer.unref();
+    forceTimer.unref();
 
-    // 1. Stop receiving new connections; wait for ongoing requests to finish
-    server.close(async () => {
-      console.log('HTTP server closed. No longer accepting connections.');
-
-      try {
-        // 2. Cleanly close database and external resources
-        await closeDatabase();
-        console.log('Database connections closed cleanly.');
-        // Allow event loop to exit naturally with status 0
-        process.exitCode = 0;
-      } catch (err) {
-        console.error('Error during resource cleanup:', err.message);
-        process.exitCode = 1;
-      }
+    server.close(() => {
+      console.log('HTTP server closed cleanly.');
+      process.exitCode = 0;
     });
   }
 
@@ -443,49 +322,43 @@ setupGracefulShutdown(server);
 
 server.listen(0, () => {
   console.log('Server is listening.');
-  // Trigger termination signal programmatically for demonstration
   process.emit('SIGTERM');
 });
-// Output: Server is listening.
-// Output: Received SIGTERM. Starting graceful shutdown...
-// Output: HTTP server closed. No longer accepting connections.
-// Output: Database connections closed cleanly.
 ```
 
 ## Pitfalls
 
-- Memanggil `process.exit()` di tengah operasi async yang belum selesai. Tunggu semua Promise selesai atau atur `process.exitCode = 1` agar Node keluar secara alami.
+- Mengira tipe nilai di `process.env` adalah number atau boolean. Semua variabel lingkungan selalu bertipe string.
   ```js
-  // ❌ Incorrect: terminates abruptly before async write finishes
-  // saveToDatabase();
-  // process.exit(1);
+  // ❌ Incorrect: '8080' + 1 produces '80801'
+  const port = process.env.PORT + 1;
 
-  // ✅ Correct: wait for promises or set exitCode gracefully
+  // ✅ Correct: explicitly convert to number
+  const port = Number(process.env.PORT) || 8080;
+  ```
+- Memanggil `process.exit()` di tengah operasi asynchronous yang belum selesai.
+  ```js
+  // ❌ Incorrect: terminates process before async task finishes
+  saveToDatabase();
+  process.exit(1);
+
+  // ✅ Correct: wait for promises or set process.exitCode
   await saveToDatabase();
   process.exitCode = 0;
   ```
-- Mengharapkan tipe number dari nilai `process.env`. Semua variabel lingkungan bertipe string; konversi eksplisit dengan `Number()`.
-  ```js
-  // ❌ Incorrect: '8080' + 1 becomes '80801'
-  // const port = process.env.PORT + 1;
-
-  // ✅ Correct: converts string environment variable to number
-  const port = Number(process.env.PORT) || 8080;
-  ```
-- Menjalankan proses Node di Docker sebagai PID 1 menggunakan format shell (`CMD npm start`). Shell `/bin/sh` menelan sinyal POSIX sehingga container tidak merespons `SIGTERM` dan dimatikan paksa (`SIGKILL`) setelah 10 detik.
+- Menjalankan container Node.js dengan shell form (`CMD npm start`) sehingga proses tidak menerima sinyal `SIGTERM` dari Docker.
   ```dockerfile
-  # ❌ Incorrect: shell form runs /bin/sh as PID 1, swallowing SIGTERM
-  # CMD npm start
+  # ❌ Incorrect: shell form wraps process in /bin/sh which ignores SIGTERM
+  CMD npm start
 
-  # ✅ Correct: exec form runs Node directly as PID 1 (or run container with --init)
-  # CMD ["node", "src/server.mjs"]
+  # ✅ Correct: exec form runs Node directly as PID 1
+  CMD ["node", "src/server.mjs"]
   ```
-- Menangani `uncaughtException` lalu membiarkan proses tetap berjalan normal seolah tidak terjadi apa-apa. State memori aplikasi sudah berada dalam kondisi *undefined* dan korup.
+- Menangani `uncaughtException` lalu membiarkan proses tetap berjalan normal dengan state memori yang berpotensi rusak.
   ```js
-  // ❌ Incorrect: continuing process execution after uncaught exception
+  // ❌ Incorrect: continuing execution after uncaught exception
   process.on('uncaughtException', (err) => {
     console.error('Error occurred:', err.message);
-    // Process keeps running with corrupted memory state
   });
 
   // ✅ Correct: log diagnostic info, set exitCode, and exit cleanly
@@ -494,26 +367,11 @@ server.listen(0, () => {
     process.exitCode = 1;
   });
   ```
-- Mendaftarkan handler sinyal shutdown berkali-kali tanpa guard boolean, yang memicu eksekusi pembersihan ganda (*double cleanup* atau *race condition*).
-  ```js
-  // ❌ Incorrect: triggers concurrent cleanup workflows on repeated signals
-  process.on('SIGTERM', () => closeDatabase());
-  process.on('SIGINT', () => closeDatabase());
 
-  // ✅ Correct: guard with flag to prevent duplicate execution
-  let isShuttingDown = false;
-  function onSignal() {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-    closeDatabase();
-  }
-  process.on('SIGTERM', onSignal);
-  process.on('SIGINT', onSignal);
-  ```
-
-## References
+## Referensi
 
 - [Node.js Docs: Process](https://nodejs.org/api/process.html)
+- [Node.js Docs: HTTP](https://nodejs.org/api/http.html) — modul server pendukung yang digunakan pada implementasi graceful shutdown di Kasus di Aplikasi
 
 ---
 
