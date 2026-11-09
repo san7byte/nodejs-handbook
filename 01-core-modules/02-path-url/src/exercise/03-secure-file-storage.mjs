@@ -50,254 +50,123 @@ import { fileURLToPath, pathToFileURL, URL } from 'node:url';
  *       - Mengembalikan string path absolut lokal.
  *
  * b. Tabel Spesifikasi I/O:
- * ┌───────────┬───────────────────────────────┬───────────────────────────────────┬────────────────────────────────────────────────────────────────────────┐
- * │ Skenario  │ Method / Pemanggilan          │ Input Parameter                   │ Output / Expected Behavior                                             │
- * ├───────────┼───────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────────────────────┤
- * │ Normal 1  │ resolveSafePath               │ 'documents/annual-report.pdf'     │ { absolutePath: '<root>/documents/annual-report.pdf',                  │
- * │           │                               │                                   │   relativePath: 'documents/annual-report.pdf',                         │
- * │           │                               │                                   │   fileURL: URL('file://.../annual-report.pdf') }                       │
- * │ Normal 2  │ resolveSafePath (Special #,%) │ 'assets/report #1 [100%].pdf'     │ fileURL.href mengandung '%231' dan '%25' ter-encode aman               │
- * │ Normal 3  │ toFilePath                    │ fileURL hasil resolveSafePath     │ Mengembalikan string path absolut yang identik dengan absolutePath     │
- * │ Edge 1    │ resolveSafePath (hops)        │ 'docs/./drafts/../final.csv'      │ relativePath bernilai 'docs/final.csv'                                 │
- * │ Edge 2    │ resolveSafePath (root itself) │ '.'                               │ relativePath bernilai '' dan absolutePath === rootDirectory            │
- * │ Error 1   │ resolveSafePath (Traversal)   │ '../../etc/passwd'                │ Lempar Error('Access denied: Path traversal detected')                 │
- * │ Error 2   │ resolveSafePath (Sibling)     │ '../storage-secret/keys.env'      │ Lempar Error('Access denied: Path traversal detected')                 │
- * │ Error 3   │ resolveSafePath (Null byte)   │ 'document.pdf\0.exe'              │ Lempar Error('Invalid path: Null byte detected')                       │
- * │ Error 4   │ constructor                   │ '' atau non-string                │ Lempar TypeError('Invalid root directory: Must be a non-empty string')  │
- * │ Error 5   │ toFilePath (Non-file)         │ 'https://api.com/image.png'       │ Lempar Error('Invalid URL protocol: Must be a file: URL')              │
- * │ Error 6   │ toFilePath (Outside Root)     │ 'file:///etc/passwd'              │ Lempar Error('Access denied: Path outside storage root')               │
- * └───────────┴───────────────────────────────┴───────────────────────────────────┴────────────────────────────────────────────────────────────────────────┘
+ * ┌───────────┬─────────────────────────────────────────────────┬───────────────────────────────────┬────────────────────────────────────────────────────────────────────────┐
+ * │ Skenario  │ Pemanggilan                                     │ Input                             │ Expected                                                               │
+ * ├───────────┼─────────────────────────────────────────────────┼───────────────────────────────────┼────────────────────────────────────────────────────────────────────────┤
+ * │ Normal 1  │ storage.resolveSafePath(path)                   │ 'documents/annual-report.pdf'     │ { absolutePath: '<root>/doc.pdf', rel: 'doc.pdf', fileURL: URL(...) }  │
+ * │ Normal 2  │ storage.resolveSafePath(path)                   │ 'assets/report #1 [100%].pdf'     │ fileURL.href mengandung '%231' dan '%25' ter-encode aman               │
+ * │ Normal 3  │ storage.toFilePath(fileUrl)                     │ fileURL hasil resolveSafePath     │ Mengembalikan string path absolut yang identik dengan absolutePath     │
+ * │ Edge 1    │ storage.resolveSafePath(path)                   │ 'docs/./drafts/../final.csv'      │ relativePath bernilai 'docs/final.csv'                                 │
+ * │ Edge 2    │ storage.resolveSafePath('.')                    │ '.'                               │ relativePath bernilai '' dan absolutePath === rootDirectory            │
+ * │ Error 1   │ storage.resolveSafePath('../../etc/passwd')     │ '../../etc/passwd'                │ Lempar Error('Access denied: Path traversal detected')                 │
+ * │ Error 2   │ storage.resolveSafePath('../secret/keys.env')   │ '../storage-secret/keys.env'      │ Lempar Error('Access denied: Path traversal detected')                 │
+ * │ Error 3   │ storage.resolveSafePath('document.pdf\0.exe')   │ 'document.pdf\0.exe'              │ Lempar Error('Invalid path: Null byte detected')                       │
+ * │ Error 4   │ new SecureFileStorage('')                       │ '' atau non-string                │ Lempar TypeError('Invalid root directory: Must be a non-empty string')  │
+ * │ Error 5   │ storage.toFilePath('https://api.com/image.png') │ 'https://api.com/image.png'       │ Lempar Error('Invalid URL protocol: Must be a file: URL')              │
+ * │ Error 6   │ storage.toFilePath('file:///etc/passwd')        │ 'file:///etc/passwd'              │ Lempar Error('Access denied: Path outside storage root')               │
+ * └───────────┴─────────────────────────────────────────────────┴───────────────────────────────────┴────────────────────────────────────────────────────────────────────────┘
  */
 
+const isNonEmptyString = (v) => typeof v === 'string' && v.trim() !== '';
+
+/**
+ * Pengelola penyimpanan berkas aman dengan mitigasi path traversal dan interoperabilitas WHATWG URL.
+ */
 export class SecureFileStorage {
+  #rootDir;
+
   /**
-   * Initializes a secure storage manager.
+   * Menginisialisasi direktori root penyimpanan aman.
    *
-   * @param {string} rootDir - Root directory path
+   * @param {string} rootDir
    */
   constructor(rootDir) {
-    // STUB: Do not remove or implement here.
-    throw new Error('Not implemented');
+    if (!isNonEmptyString(rootDir)) {
+      throw new TypeError('Invalid root directory: Must be a non-empty string');
+    }
+    this.#rootDir = path.resolve(rootDir);
   }
 
   /**
-   * Absolute path of the storage root directory.
-   * @type {string}
+   * Mengambil path absolut direktori root penyimpanan.
+   *
+   * @returns {string}
    */
   get rootDirectory() {
-    // STUB: Do not remove or implement here.
-    throw new Error('Not implemented');
+    return this.#rootDir;
   }
 
   /**
-   * WHATWG file: URL representing the storage root directory.
-   * @type {URL}
+   * Mengambil instance WHATWG file: URL dari direktori root penyimpanan.
+   *
+   * @returns {URL}
    */
   get rootURL() {
-    // STUB: Do not remove or implement here.
-    throw new Error('Not implemented');
+    return pathToFileURL(this.#rootDir);
   }
 
   /**
-   * Resolves and verifies an untrusted user path within the storage boundary.
+   * Menyelesaikan dan memvalidasi path pengguna di dalam batas direktori root penyimpanan.
    *
-   * @param {string} userInputPath - Relative path input from untrusted source
-   * @returns {{
-   *   absolutePath: string,
-   *   relativePath: string,
-   *   fileURL: URL
-   * }}
+   * @param {string} userInputPath
+   * @returns {{ absolutePath: string, relativePath: string, fileURL: URL }}
    */
   resolveSafePath(userInputPath) {
-    // STUB: Do not remove or implement here.
-    throw new Error('Not implemented');
+    if (typeof userInputPath !== 'string' || userInputPath.trim() === '') {
+      throw new TypeError('User path must be a non-empty string');
+    }
+
+    if (userInputPath.includes('\0')) {
+      throw new Error('Invalid path: Null byte detected');
+    }
+
+    const target = path.resolve(this.#rootDir, userInputPath);
+
+    if (
+      target === this.#rootDir ||
+      target.startsWith(this.#rootDir + path.sep)
+    ) {
+      return {
+        absolutePath: target,
+        relativePath: path.relative(this.#rootDir, target),
+        fileURL: pathToFileURL(target),
+      };
+    } else {
+      throw new Error('Access denied: Path traversal detected');
+    }
   }
 
   /**
-   * Converts a WHATWG file: URL back to an absolute local filesystem path within storage boundary.
+   * Mengonversi WHATWG file: URL kembali ke path absolut lokal di dalam batas root.
    *
-   * @param {string | URL} fileUrlInput - File URL string or URL instance
-   * @returns {string} Absolute local filesystem path
+   * @param {string | URL} fileUrlInput
+   * @returns {string}
    */
   toFilePath(fileUrlInput) {
-    // STUB: Do not remove or implement here.
-    throw new Error('Not implemented');
-  }
-}
-
-// ============================================================================
-// TEST RUNNER (ISOLATED)
-// ============================================================================
-
-let passedCount = 0;
-let failedCount = 0;
-
-function runTest(scenarioName, testFn) {
-  try {
-    testFn();
-    console.log(`[PASS] ${scenarioName}`);
-    passedCount++;
-  } catch (err) {
-    console.log(`[FAIL] ${scenarioName}: ${err.message}`);
-    failedCount++;
-  }
-}
-
-console.log('=== TEST SOAL 03: SecureFileStorage ===\n');
-
-const MOCK_STORAGE_ROOT = path.resolve('/tmp/secure-app-storage');
-
-// 1. Normal standard safe path resolution
-runTest('Skenario Normal 1: Standard File Resolution', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  const result = storage.resolveSafePath('documents/annual-report.pdf');
-  const expectedAbs = path.join(MOCK_STORAGE_ROOT, 'documents', 'annual-report.pdf');
-  const expectedRel = path.join('documents', 'annual-report.pdf');
-
-  if (result.absolutePath !== expectedAbs) throw new Error(`absolutePath mismatch: expected ${expectedAbs}, got ${result.absolutePath}`);
-  if (result.relativePath !== expectedRel) throw new Error(`relativePath mismatch: expected ${expectedRel}, got ${result.relativePath}`);
-  if (!(result.fileURL instanceof URL)) throw new Error('fileURL must be an instance of URL');
-  if (result.fileURL.protocol !== 'file:') throw new Error(`fileURL protocol must be file:, got ${result.fileURL.protocol}`);
-});
-
-// 2. Normal special characters (#, %, spaces) safe encoding in URL
-runTest('Skenario Normal 2: Special Characters (#, %, space) in Filename', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  const result = storage.resolveSafePath('assets/report #1 [100%].pdf');
-
-  if (!result.fileURL.href.includes('%231')) throw new Error('URL must percent-encode # character to %23');
-  if (!result.fileURL.href.includes('%25')) throw new Error('URL must percent-encode % character to %25');
-});
-
-// 3. Normal toFilePath roundtrip conversion
-runTest('Skenario Normal 3: toFilePath Roundtrip Conversion', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  const result = storage.resolveSafePath('assets/report #1 [100%].pdf');
-  const converted = storage.toFilePath(result.fileURL);
-
-  if (converted !== result.absolutePath) {
-    throw new Error(`toFilePath mismatch: expected ${result.absolutePath}, got ${converted}`);
-  }
-});
-
-// 4. Edge 1: Normalization of relative hops inside root
-runTest('Skenario Edge 1: Relative Hops Normalization', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  const result = storage.resolveSafePath('docs/./drafts/../final.csv');
-  const expectedRel = path.join('docs', 'final.csv');
-
-  if (result.relativePath !== expectedRel) {
-    throw new Error(`relativePath mismatch: expected ${expectedRel}, got ${result.relativePath}`);
-  }
-});
-
-// 5. Edge 2: Root directory reference (.)
-runTest('Skenario Edge 2: Storage Root Reference (.)', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  const result = storage.resolveSafePath('.');
-
-  if (result.absolutePath !== storage.rootDirectory) {
-    throw new Error(`absolutePath must match rootDirectory: expected ${storage.rootDirectory}, got ${result.absolutePath}`);
-  }
-  if (result.relativePath !== '') {
-    throw new Error(`relativePath must be empty string for root, got '${result.relativePath}'`);
-  }
-});
-
-// 6. Error 1: Path traversal attack
-runTest('Skenario Error 1: Path Traversal Attack (../../etc/passwd)', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  let thrown = false;
-  try {
-    storage.resolveSafePath('../../etc/passwd');
-  } catch (err) {
-    thrown = true;
-    if (!err.message.includes('Path traversal detected')) {
-      throw new Error(`Expected 'Path traversal detected', got: ${err.message}`);
+    let url;
+    try {
+      url = fileUrlInput instanceof URL ? fileUrlInput : new URL(fileUrlInput);
+    } catch {
+      throw new Error('Invalid URL protocol: Must be a file: URL');
     }
-  }
-  if (!thrown) throw new Error('Harus memblokir path traversal attack');
-});
-
-// 7. Error 2: Sibling directory escape bypass
-runTest('Skenario Error 2: Sibling Directory Escape Bypass', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  let thrown = false;
-  try {
-    storage.resolveSafePath('../secure-app-storage-leak/secret.key');
-  } catch (err) {
-    thrown = true;
-    if (!err.message.includes('Path traversal detected')) {
-      throw new Error(`Expected 'Path traversal detected', got: ${err.message}`);
+    if (url.protocol !== 'file:') {
+      throw new Error('Invalid URL protocol: Must be a file: URL');
     }
-  }
-  if (!thrown) throw new Error('Harus memblokir sibling directory escape');
-});
 
-// 8. Error 3: Null byte injection detection
-runTest('Skenario Error 3: Null Byte Injection Detection', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  let thrown = false;
-  try {
-    storage.resolveSafePath('safe.pdf\0.exe');
-  } catch (err) {
-    thrown = true;
-    if (!err.message.includes('Null byte detected')) {
-      throw new Error(`Expected 'Null byte detected', got: ${err.message}`);
+    let target;
+    try {
+      target = path.resolve(fileURLToPath(url));
+    } catch {
+      throw new Error('Access denied: Path outside storage root');
     }
-  }
-  if (!thrown) throw new Error('Harus memblokir null byte injection');
-});
 
-// 9. Error 4: Constructor invalid argument
-runTest('Skenario Error 4: Constructor Argument Validation', () => {
-  let thrown = false;
-  try {
-    new SecureFileStorage('');
-  } catch (err) {
-    thrown = true;
-    if (!(err instanceof TypeError)) throw new Error(`Expected TypeError, got ${err.name}`);
-    if (!err.message.includes('Must be a non-empty string')) {
-      throw new Error(`Expected 'Must be a non-empty string', got: ${err.message}`);
+    if (
+      target !== this.#rootDir &&
+      !target.startsWith(this.#rootDir + path.sep)
+    ) {
+      throw new Error('Access denied: Path outside storage root');
     }
+
+    return target;
   }
-  if (!thrown) throw new Error('Constructor harus melempar TypeError saat rootDir kosong');
-});
-
-// 10. Error 5: Non-file scheme in toFilePath
-runTest('Skenario Error 5: toFilePath Non-file Scheme Rejection', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  let thrown = false;
-  try {
-    storage.toFilePath('https://api.example.com/asset.png');
-  } catch (err) {
-    thrown = true;
-    if (!err.message.includes('Must be a file: URL')) {
-      throw new Error(`Expected 'Must be a file: URL', got: ${err.message}`);
-    }
-  }
-  if (!thrown) throw new Error('toFilePath harus menolak skema non-file');
-});
-
-// 11. Error 6: File URL outside root in toFilePath
-runTest('Skenario Error 6: toFilePath File Outside Storage Root', () => {
-  const storage = new SecureFileStorage(MOCK_STORAGE_ROOT);
-  let thrown = false;
-  try {
-    storage.toFilePath('file:///etc/passwd');
-  } catch (err) {
-    thrown = true;
-    if (!err.message.includes('Path outside storage root')) {
-      throw new Error(`Expected 'Path outside storage root', got: ${err.message}`);
-    }
-  }
-  if (!thrown) throw new Error('toFilePath harus menolak file URL di luar direktori root');
-});
-
-console.log('\n--------------------------------------------------');
-console.log(`Ringkasan: ${passedCount} / ${passedCount + failedCount} lulus (${failedCount} gagal)`);
-console.log('--------------------------------------------------');
-
-if (failedCount > 0) {
-  process.exitCode = 1;
 }

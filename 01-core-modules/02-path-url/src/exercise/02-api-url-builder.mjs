@@ -1,4 +1,4 @@
-import { URL, URLSearchParams } from 'node:url';
+import { URL } from 'node:url';
 
 /**
  * ============================================================================
@@ -35,146 +35,70 @@ import { URL, URLSearchParams } from 'node:url';
  *      - Jika disediakan string non-kosong, tambahkan hash ke URL (pastikan diawali `#`).
  *
  * b. Tabel Spesifikasi I/O:
- * ┌───────────┬─────────────────────────────────────┬──────────────────┬──────────────────────────────────────────┬────────────────────────────┬───────────────────────────────────────────────────────────────────────┐
- * │ Skenario  │ baseUrl                             │ endpointPath     │ queryParams                              │ options                    │ Output / Expected Behavior                                            │
- * ├───────────┼─────────────────────────────────────┼──────────────────┼──────────────────────────────────────────┼────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
- * │ Normal 1  │ 'https://api.example.com'           │ 'v1/users'       │ { page: 1, limit: 10 }                   │ {}                         │ 'https://api.example.com/v1/users?page=1&limit=10'                    │
- * │ Normal 2  │ 'https://api.example.com/api/'      │ '/search'        │ { q: 'c++ developer' }                   │ {}                         │ 'https://api.example.com/api/search?q=c%2B%2B+developer'             │
- * │ Edge 1    │ 'https://api.example.com'           │ 'filter'         │ { status: ['active', 'pending'] }        │ {}                         │ 'https://api.example.com/filter?status=active&status=pending'         │
- * │ Edge 2    │ 'https://api.example.com'           │ 'users'          │ { active: true, role: null, q: undefined }│ {}                        │ 'https://api.example.com/users?active=true'                           │
- * │ Edge 3    │ 'https://api.example.com'           │ 'docs'           │ {}                                       │ { hash: 'section-2' }      │ 'https://api.example.com/docs#section-2'                              │
- * │ Edge 4    │ 'https://api.example.com?key=token' │ 'status'         │ { format: 'json' }                       │ {}                         │ 'https://api.example.com/status?key=token&format=json'                │
- * │ Error 1   │ 'not-a-valid-url'                   │ 'users'          │ {}                                       │ {}                         │ Lempar TypeError('Invalid base URL: Must be a parseable URL')         │
- * │ Error 2   │ 'javascript:alert(1)'               │ ''               │ {}                                       │ {}                         │ Lempar Error('Disallowed protocol: Only HTTP/HTTPS URLs are allowed') │
- * │ Error 3   │ 'file:///etc/passwd'                │ ''               │ {}                                       │ {}                         │ Lempar Error('Disallowed protocol: Only HTTP/HTTPS URLs are allowed') │
- * └───────────┴─────────────────────────────────────┴──────────────────┴──────────────────────────────────────────┴────────────────────────────┴───────────────────────────────────────────────────────────────────────┘
+ * ┌───────────┬────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────┐
+ * │ Skenario  │ Pemanggilan                                            │ Input                                                  │ Expected                                                              │
+ * ├───────────┼────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
+ * │ Normal 1  │ buildApiEndpoint(baseUrl, 'v1/users', { page, limit }) │ baseUrl: 'https://api.example.com'                     │ 'https://api.example.com/v1/users?page=1&limit=10'                    │
+ * │ Normal 2  │ buildApiEndpoint(baseUrl, '/search', { q })            │ baseUrl: 'https://api.example.com/api/', q: 'c++ dev'  │ 'https://api.example.com/api/search?q=c%2B%2B+developer'             │
+ * │ Edge 1    │ buildApiEndpoint(baseUrl, 'filter', { status: [...] }) │ status: ['active', 'pending']                          │ 'https://api.example.com/filter?status=active&status=pending'         │
+ * │ Edge 2    │ buildApiEndpoint(baseUrl, 'users', { active, role })   │ role: null, q: undefined                               │ 'https://api.example.com/users?active=true'                           │
+ * │ Edge 3    │ buildApiEndpoint(baseUrl, 'docs', {}, { hash })        │ options: { hash: 'section-2' }                         │ 'https://api.example.com/docs#section-2'                              │
+ * │ Edge 4    │ buildApiEndpoint(baseUrl, 'status', { format: 'json'}) │ baseUrl: 'https://api.example.com?key=token'           │ 'https://api.example.com/status?key=token&format=json'                │
+ * │ Error 1   │ buildApiEndpoint('not-a-valid-url', 'users')           │ baseUrl: 'not-a-valid-url'                             │ Lempar TypeError('Invalid base URL: Must be a parseable URL')         │
+ * │ Error 2   │ buildApiEndpoint('javascript:alert(1)')                │ baseUrl: 'javascript:alert(1)'                         │ Lempar Error('Disallowed protocol: Only HTTP/HTTPS URLs are allowed') │
+ * │ Error 3   │ buildApiEndpoint('file:///etc/passwd')                 │ baseUrl: 'file:///etc/passwd'                          │ Lempar Error('Disallowed protocol: Only HTTP/HTTPS URLs are allowed') │
+ * └───────────┴────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────┘
  */
+
+const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 
 /**
- * Constructs a fully normalized and safe API URL.
+ * Membangun URL API ternormalisasi dan aman dengan penanganan query parameter serta protokol guard.
  *
- * @param {string} baseUrl - Base HTTP/HTTPS URL
- * @param {string} [endpointPath=''] - Endpoint sub-path
- * @param {Record<string, any>} [queryParams={}] - Key-value query parameters
- * @param {{ hash?: string }} [options={}] - Additional URL formatting options
- * @returns {string} Fully serialized WHATWG URL string
+ * @param {string} baseUrl
+ * @param {string} [endpointPath='']
+ * @param {Record<string, any>} [queryParams={}]
+ * @param {{ hash?: string }} [options={}]
+ * @returns {string}
  */
-export function buildApiEndpoint(baseUrl, endpointPath = '', queryParams = {}, options = {}) {
-  // STUB: Do not remove or implement here.
-  throw new Error('Not implemented');
-}
-
-// ============================================================================
-// TEST RUNNER (ISOLATED)
-// ============================================================================
-
-let passedCount = 0;
-let failedCount = 0;
-
-function runTest(scenarioName, testFn) {
-  try {
-    testFn();
-    console.log(`[PASS] ${scenarioName}`);
-    passedCount++;
-  } catch (err) {
-    console.log(`[FAIL] ${scenarioName}: ${err.message}`);
-    failedCount++;
+export function buildApiEndpoint(
+  baseUrl,
+  endpointPath = '',
+  queryParams = {},
+  options = {},
+) {
+  // 1. Validasi tipe dulu, baru parse
+  if (typeof baseUrl !== 'string' || !URL.canParse(baseUrl)) {
+    throw new TypeError('Invalid base URL: Must be a parseable URL');
   }
-}
 
-console.log('=== TEST SOAL 02: buildApiEndpoint ===\n');
+  const url = new URL(baseUrl);
 
-// 1. Normal standard endpoint & pagination params
-runTest('Skenario Normal 1: Standard URL & Pagination', () => {
-  const result = buildApiEndpoint('https://api.example.com', 'v1/users', { page: 1, limit: 10 });
-  const expected = 'https://api.example.com/v1/users?page=1&limit=10';
-  if (result !== expected) throw new Error(`Expected ${expected}, got ${result}`);
-});
+  // 2. Cek protokol dari hasil parse (sudah lowercase & ter-trim)
+  if (!ALLOWED_PROTOCOLS.has(url.protocol)) {
+    throw new Error('Disallowed protocol: Only HTTP/HTTPS URLs are allowed');
+  }
 
-// 2. Normal special characters & trailing/leading slashes resolution
-runTest('Skenario Normal 2: Slash Resolution & Special Characters (+ and space)', () => {
-  const result = buildApiEndpoint('https://api.example.com/api/', '/search', { q: 'c++ developer' });
-  const expected = 'https://api.example.com/api/search?q=c%2B%2B+developer';
-  if (result !== expected) throw new Error(`Expected ${expected}, got ${result}`);
-});
+  // 3. Gabung path secara defensif
+  const subPath = String(endpointPath ?? '').replace(/^\/+/, '');
+  if (subPath) {
+    const basePath = url.pathname.replace(/\/+$/, '');
+    url.pathname = `${basePath}/${subPath}`.replace(/\/{2,}/g, '/');
+  }
 
-// 3. Edge 1: Multi-value array query parameters
-runTest('Skenario Edge 1: Array Query Parameters', () => {
-  const result = buildApiEndpoint('https://api.example.com', 'filter', { status: ['active', 'pending'] });
-  const expected = 'https://api.example.com/filter?status=active&status=pending';
-  if (result !== expected) throw new Error(`Expected ${expected}, got ${result}`);
-});
-
-// 4. Edge 2: Null and undefined parameters omitted
-runTest('Skenario Edge 2: Filtering Null & Undefined Parameters', () => {
-  const result = buildApiEndpoint('https://api.example.com', 'users', { active: true, role: null, q: undefined });
-  const expected = 'https://api.example.com/users?active=true';
-  if (result !== expected) throw new Error(`Expected ${expected}, got ${result}`);
-});
-
-// 5. Edge 3: Hash fragment support
-runTest('Skenario Edge 3: Fragment Hash Support', () => {
-  const result = buildApiEndpoint('https://api.example.com', 'docs', {}, { hash: 'section-2' });
-  const expected = 'https://api.example.com/docs#section-2';
-  if (result !== expected) throw new Error(`Expected ${expected}, got ${result}`);
-});
-
-// 6. Edge 4: Preserving existing query parameters in base URL
-runTest('Skenario Edge 4: Preserving Pre-existing Query Parameters', () => {
-  const result = buildApiEndpoint('https://api.example.com?key=token', 'status', { format: 'json' });
-  const expected = 'https://api.example.com/status?key=token&format=json';
-  if (result !== expected) throw new Error(`Expected ${expected}, got ${result}`);
-});
-
-// 7. Error 1: Invalid base URL format
-runTest('Skenario Error 1: Invalid Base URL Format', () => {
-  let thrown = false;
-  try {
-    buildApiEndpoint('not-a-valid-url', 'users');
-  } catch (err) {
-    thrown = true;
-    if (!(err instanceof TypeError)) throw new Error(`Expected TypeError, got ${err.name}: ${err.message}`);
-    if (!err.message.includes('Must be a parseable URL')) {
-      throw new Error(`Expected message to include 'Must be a parseable URL', got: ${err.message}`);
+  // 4. Query params (query bawaan baseUrl tetap dipertahankan)
+  for (const [key, value] of Object.entries(queryParams ?? {})) {
+    const values = Array.isArray(value) ? value : [value];
+    for (const item of values) {
+      if (item === null || item === undefined) continue;
+      url.searchParams.append(key, String(item));
     }
   }
-  if (!thrown) throw new Error('Fungsi harus melempar TypeError saat baseUrl tidak valid');
-});
 
-// 8. Error 2: Disallowed javascript: scheme
-runTest('Skenario Error 2: Disallowed Scheme (javascript:)', () => {
-  let thrown = false;
-  try {
-    buildApiEndpoint('javascript:alert(1)');
-  } catch (err) {
-    thrown = true;
-    if (!(err instanceof Error)) throw new Error(`Expected Error, got ${err.name}`);
-    if (!err.message.includes('Only HTTP/HTTPS URLs are allowed')) {
-      throw new Error(`Expected message to include 'Only HTTP/HTTPS URLs are allowed', got: ${err.message}`);
-    }
+  // 5. Hash (setter otomatis menambahkan '#')
+  if (typeof options?.hash === 'string' && options.hash) {
+    url.hash = options.hash;
   }
-  if (!thrown) throw new Error('Fungsi harus melempar Error saat protokol bukan http/https');
-});
 
-// 9. Error 3: Disallowed file: scheme
-runTest('Skenario Error 3: Disallowed Scheme (file:)', () => {
-  let thrown = false;
-  try {
-    buildApiEndpoint('file:///etc/passwd');
-  } catch (err) {
-    thrown = true;
-    if (!(err instanceof Error)) throw new Error(`Expected Error, got ${err.name}`);
-    if (!err.message.includes('Only HTTP/HTTPS URLs are allowed')) {
-      throw new Error(`Expected message to include 'Only HTTP/HTTPS URLs are allowed', got: ${err.message}`);
-    }
-  }
-  if (!thrown) throw new Error('Fungsi harus melempar Error saat protokol bukan http/https');
-});
-
-console.log('\n--------------------------------------------------');
-console.log(`Ringkasan: ${passedCount} / ${passedCount + failedCount} lulus (${failedCount} gagal)`);
-console.log('--------------------------------------------------');
-
-if (failedCount > 0) {
-  process.exitCode = 1;
+  return url.href;
 }

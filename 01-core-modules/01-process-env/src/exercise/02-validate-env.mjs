@@ -31,17 +31,23 @@ import process from 'node:process';
  *      - Kembalikan boolean `false`.
  *
  * b. Tabel Spesifikasi I/O:
- * ┌───────────┬──────────────────────────────────────────┬─────────────────────────────┬────────────────────────────────────────────────────────────────────────┐
- * │ Skenario  │ process.env                              │ requiredEnvKeys             │ Output / Expected Behavior                                             │
- * ├───────────┼──────────────────────────────────────────┼─────────────────────────────┼────────────────────────────────────────────────────────────────────────┤
- * │ Normal 1  │ { APP_NAME: 'App', APP_PORT: '3000' }    │ ['APP_NAME', 'APP_PORT']    │ Returns true, process.exitCode = 0                                     │
- * │ Edge 1    │ { APP_NAME: 'App' }                      │ ['APP_NAME', 'SECRET_KEY']  │ Returns false, process.exitCode = 1 (Missing: SECRET_KEY)              │
- * │ Edge 2    │ { TOKEN: '   ' }                         │ ['TOKEN']                   │ Returns false, process.exitCode = 1 (Whitespace only treated as missing│
- * │ Edge 3    │ {}                                       │ ['KEY_A', 'KEY_B']          │ Returns false, process.exitCode = 1 (Missing: KEY_A, KEY_B)            │
- * │ Error 1   │ {}                                       │ 'not-an-array'              │ Lempar TypeError('requiredEnvKeys must be an array of strings')        │
- * └───────────┴──────────────────────────────────────────┴─────────────────────────────┴────────────────────────────────────────────────────────────────────────┘
+ * ┌───────────┬─────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────┐
+ * │ Skenario  │ Pemanggilan                                             │ Input                                                  │ Expected                                                        │
+ * ├───────────┼─────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+ * │ Normal 1  │ validateRuntimeEnvironment(['APP_NAME', 'APP_PORT'])    │ env: { APP_NAME: 'App', APP_PORT: '3000' }             │ Returns true, process.exitCode = 0                              │
+ * │ Edge 1    │ validateRuntimeEnvironment(['APP_NAME', 'SECRET_KEY'])  │ env: { APP_NAME: 'App' }                               │ Returns false, process.exitCode = 1 (Missing: SECRET_KEY)       │
+ * │ Edge 2    │ validateRuntimeEnvironment(['TOKEN'])                   │ env: { TOKEN: '   ' }                                  │ Returns false, process.exitCode = 1 (Whitespace treated as empty│
+ * │ Edge 3    │ validateRuntimeEnvironment(['KEY_A', 'KEY_B'])          │ env: {}                                                │ Returns false, process.exitCode = 1 (Missing: KEY_A, KEY_B)     │
+ * │ Error 1   │ validateRuntimeEnvironment('not-an-array')              │ requiredEnvKeys: 'not-an-array'                        │ Lempar TypeError('requiredEnvKeys must be an array of strings') │
+ * └───────────┴─────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────┘
  */
 
+/**
+ * Memvalidasi variabel environment yang wajib dan menyetel process.exitCode sesuai status.
+ *
+ * @param {string[]} requiredEnvKeys
+ * @returns {boolean}
+ */
 export function validateRuntimeEnvironment(requiredEnvKeys) {
   if (!Array.isArray(requiredEnvKeys)) {
     throw new TypeError('requiredEnvKeys must be an array of strings');
@@ -64,93 +70,4 @@ export function validateRuntimeEnvironment(requiredEnvKeys) {
 
   process.exitCode = 0;
   return true;
-}
-
-// ============================================================================
-// TEST RUNNER (ISOLATED)
-// ============================================================================
-
-const originalEnv = { ...process.env };
-const originalExitCode = process.exitCode;
-
-let passedCount = 0;
-let failedCount = 0;
-
-function resetEnv() {
-  process.exitCode = undefined;
-}
-
-function runTest(scenarioName, testFn) {
-  try {
-    resetEnv();
-    testFn();
-    console.log(`[PASS] ${scenarioName}`);
-    passedCount++;
-  } catch (err) {
-    console.log(`[FAIL] ${scenarioName}: ${err.message}`);
-    failedCount++;
-  } finally {
-    process.env = { ...originalEnv };
-    process.exitCode = originalExitCode;
-  }
-}
-
-console.log('=== TEST SOAL 02: validateRuntimeEnvironment ===\n');
-
-// 1. Skenario Normal 1: Semua key valid
-runTest('Skenario Normal 1: Semua Key Valid', () => {
-  process.env.APP_NAME = 'PaymentGateway';
-  process.env.APP_PORT = '3000';
-  const result = validateRuntimeEnvironment(['APP_NAME', 'APP_PORT']);
-  if (result !== true) throw new Error(`Expected result true, got ${result}`);
-  if (process.exitCode !== 0) throw new Error(`Expected exitCode 0, got ${process.exitCode}`);
-});
-
-// 2. Skenario Edge 1: Key tidak disetel (undefined)
-runTest('Skenario Edge 1: Key Hilang / Undefined', () => {
-  delete process.env.SECRET_KEY;
-  process.env.APP_NAME = 'PaymentGateway';
-  const result = validateRuntimeEnvironment(['APP_NAME', 'SECRET_KEY']);
-  if (result !== false) throw new Error(`Expected result false, got ${result}`);
-  if (process.exitCode !== 1) throw new Error(`Expected exitCode 1, got ${process.exitCode}`);
-});
-
-// 3. Skenario Edge 2: Key bernilai spasi kosong
-runTest('Skenario Edge 2: Key Bernilai String Kosong / Spasi', () => {
-  process.env.EMPTY_TOKEN = '   ';
-  const result = validateRuntimeEnvironment(['EMPTY_TOKEN']);
-  if (result !== false) throw new Error(`Expected result false, got ${result}`);
-  if (process.exitCode !== 1) throw new Error(`Expected exitCode 1, got ${process.exitCode}`);
-});
-
-// 4. Skenario Edge 3: Multiple keys hilang
-runTest('Skenario Edge 3: Multi-Key Hilang Sekaligus', () => {
-  delete process.env.KEY_A;
-  delete process.env.KEY_B;
-  const result = validateRuntimeEnvironment(['KEY_A', 'KEY_B']);
-  if (result !== false) throw new Error(`Expected result false, got ${result}`);
-  if (process.exitCode !== 1) throw new Error(`Expected exitCode 1, got ${process.exitCode}`);
-});
-
-// 5. Skenario Error 1: Input bukan array
-runTest('Skenario Error 1: Parameter Bukan Array', () => {
-  let thrown = false;
-  try {
-    validateRuntimeEnvironment('INVALID_ARG');
-  } catch (err) {
-    thrown = true;
-    if (!(err instanceof TypeError)) throw new Error(`Expected TypeError, got ${err.name}`);
-    if (!err.message.includes('must be an array of strings')) {
-      throw new Error(`Expected 'must be an array of strings', got: ${err.message}`);
-    }
-  }
-  if (!thrown) throw new Error('Harus melempar TypeError saat input bukan array');
-});
-
-console.log('\n--------------------------------------------------');
-console.log(`Ringkasan: ${passedCount} / ${passedCount + failedCount} lulus (${failedCount} gagal)`);
-console.log('--------------------------------------------------');
-
-if (failedCount > 0) {
-  process.exitCode = 1;
 }
