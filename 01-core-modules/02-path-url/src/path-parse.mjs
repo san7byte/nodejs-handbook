@@ -2,28 +2,28 @@ import path from 'node:path';
 
 const fullFile = '/var/www/uploads/document.pdf';
 
-// Normal: decompose path elements using utility functions
+// Normal: membedah elemen path menggunakan fungsi pembantu
 const dir = path.dirname(fullFile);
 const base = path.basename(fullFile);
 const ext = path.extname(fullFile);
 const baseWithoutExt = path.basename(fullFile, ext);
 
-// Normal: parse path into a structured object
+// Normal: membedah path menjadi objek terstruktur
 const parsed = path.parse(fullFile);
 
-// Normal: format an object back into a path string
+// Normal: menyusun kembali objek menjadi string path
 const formatted = path.format({
   dir: '/app/dist',
   name: 'bundle',
   ext: '.js',
 });
 
-// Edge-case: dotfiles and files without extension
+// Edge-case: dotfile dan berkas tanpa ekstensi
 const dotfile = '/app/.env';
 const dotfileExt = path.extname(dotfile);
 const dotfileBase = path.basename(dotfile);
 
-// Edge-case: base property in format overrides name and ext
+// Edge-case: properti base pada format menimpa properti name dan ext
 const formattedWithBase = path.format({
   dir: '/app/dist',
   base: 'custom.min.js',

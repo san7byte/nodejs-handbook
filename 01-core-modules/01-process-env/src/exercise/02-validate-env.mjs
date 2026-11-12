@@ -49,10 +49,12 @@ import process from 'node:process';
  * @returns {boolean}
  */
 export function validateRuntimeEnvironment(requiredEnvKeys) {
+  // 1. Validasi input: pastikan requiredEnvKeys bertipe Array
   if (!Array.isArray(requiredEnvKeys)) {
     throw new TypeError('requiredEnvKeys must be an array of strings');
   }
 
+  // 2. Kumpulkan kunci variabel yang hilang, bernilai null, atau berupa string kosong
   const missingKeys = [];
 
   for (const key of requiredEnvKeys) {
@@ -63,6 +65,7 @@ export function validateRuntimeEnvironment(requiredEnvKeys) {
     }
   }
 
+  // 3. Setel status exitCode dan kembalikan boolean hasil validasi
   if (missingKeys.length > 0) {
     process.exitCode = 1;
     return false;

@@ -4,7 +4,7 @@ const userArgs = process.argv.slice(2);
 const portIndex = userArgs.indexOf('--port');
 const portValue = portIndex !== -1 ? userArgs[portIndex + 1] : undefined;
 
-// Edge-case: flag exists but value is missing or another flag
+// Edge-case: flag ada tetapi nilainya hilang atau berupa flag lain
 const hasValue = portValue !== undefined && !portValue.startsWith('--');
 const parsedPort = hasValue ? Number(portValue) : null;
 const isValid = parsedPort !== null && Number.isInteger(parsedPort);

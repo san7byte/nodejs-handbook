@@ -1,9 +1,9 @@
 import { URL } from 'node:url';
 
-// Normal: parse absolute URL and relative with base
+// Normal: mem-parsing URL absolut dan path relatif berbasis baseURL
 const api = new URL('/v1/users', 'https://api.example.com:8080');
 
-// Edge-case: defensive validation without try-catch using URL.canParse
+// Edge-case: validasi defensif tanpa blok try-catch menggunakan URL.canParse
 const isValid = URL.canParse('https://api.example.com/health');
 const isInvalid = URL.canParse('/invalid-without-base');
 

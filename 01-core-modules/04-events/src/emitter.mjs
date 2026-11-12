@@ -11,7 +11,9 @@ const processor = new OrderProcessor();
 
 // Standard listener
 processor.on('created', (order) => {
-  console.log(`[Notification] Order ${order.orderId} processed ($${order.amount}).`);
+  console.log(
+    `[Notification] Order ${order.orderId} processed ($${order.amount}).`,
+  );
 });
 
 // One-time listener

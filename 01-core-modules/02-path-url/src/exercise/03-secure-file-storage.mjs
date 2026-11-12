@@ -81,6 +81,7 @@ export class SecureFileStorage {
    * @param {string} rootDir
    */
   constructor(rootDir) {
+    // Validasi dan normalisasi direktori root penyimpanan
     if (!isNonEmptyString(rootDir)) {
       throw new TypeError('Invalid root directory: Must be a non-empty string');
     }
@@ -112,6 +113,7 @@ export class SecureFileStorage {
    * @returns {{ absolutePath: string, relativePath: string, fileURL: URL }}
    */
   resolveSafePath(userInputPath) {
+    // 1. Validasi input: pastikan string non-kosong dan tidak mengandung null byte
     if (typeof userInputPath !== 'string' || userInputPath.trim() === '') {
       throw new TypeError('User path must be a non-empty string');
     }
@@ -120,8 +122,10 @@ export class SecureFileStorage {
       throw new Error('Invalid path: Null byte detected');
     }
 
+    // 2. Selesaikan path target secara absolut terhadap root
     const target = path.resolve(this.#rootDir, userInputPath);
 
+    // 3. Batasi akses: pastikan target berada di dalam root (pencegahan path traversal)
     if (
       target === this.#rootDir ||
       target.startsWith(this.#rootDir + path.sep)
@@ -143,6 +147,7 @@ export class SecureFileStorage {
    * @returns {string}
    */
   toFilePath(fileUrlInput) {
+    // 1. Validasi URL: pastikan input berformat URL yang valid dengan protokol file:
     let url;
     try {
       url = fileUrlInput instanceof URL ? fileUrlInput : new URL(fileUrlInput);
@@ -153,6 +158,7 @@ export class SecureFileStorage {
       throw new Error('Invalid URL protocol: Must be a file: URL');
     }
 
+    // 2. Konversi file: URL ke path absolut sistem berkas
     let target;
     try {
       target = path.resolve(fileURLToPath(url));
@@ -160,6 +166,7 @@ export class SecureFileStorage {
       throw new Error('Access denied: Path outside storage root');
     }
 
+    // 3. Batasi akses: pastikan berkas berada di dalam direktori root penyimpanan
     if (
       target !== this.#rootDir &&
       !target.startsWith(this.#rootDir + path.sep)

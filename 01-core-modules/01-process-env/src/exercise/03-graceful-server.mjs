@@ -57,6 +57,7 @@ export class GracefulServer {
    * @param {{ serviceName: string, drainDelayMs?: number }} [option={}]
    */
   constructor(option = {}) {
+    // 1. Validasi opsi konfigurasi server
     if (!option.serviceName || typeof option.serviceName !== 'string') {
       throw new Error('serviceName is required and must be a string');
     }
@@ -72,6 +73,7 @@ export class GracefulServer {
    * @returns {this}
    */
   start() {
+    // 2. Daftarkan handler sinyal terminasi OS (SIGTERM / SIGINT)
     process.on('SIGTERM', () => this.stop('SIGTERM'));
     process.on('SIGINT', () => this.stop('SIGINT'));
     return this;
@@ -84,9 +86,11 @@ export class GracefulServer {
    * @returns {void}
    */
   stop(signal) {
+    // 3. Mencegah penanganan sinyal ganda (idempoten)
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
 
+    // 4. Beri jeda drain delay sebelum mematikan proses dengan process.exit(0)
     setTimeout(() => {
       process.exit(0);
     }, this.drainDelayMs);
@@ -99,6 +103,7 @@ export class GracefulServer {
    * @returns {void}
    */
   simulateSignal(signal) {
+    // 5. Emit sinyal ke proses untuk pengujian / simulasi
     process.emit(signal);
   }
 }

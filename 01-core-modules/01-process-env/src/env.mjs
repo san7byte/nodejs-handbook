@@ -1,9 +1,9 @@
 import process from 'node:process';
 
-// Normal: read existing variable with fallback
+// Normal: membaca variabel lingkungan yang ada dengan nilai fallback
 const nodeEnv = process.env.NODE_ENV || 'development';
 
-// Edge-case: missing variable and strict type validation
+// Edge-case: variabel tidak tersedia dan validasi tipe data secara ketat
 const rawPort = process.env.PORT;
 const port = Number(rawPort);
 const isPortValid = Number.isInteger(port) && port >= 1 && port <= 65535;

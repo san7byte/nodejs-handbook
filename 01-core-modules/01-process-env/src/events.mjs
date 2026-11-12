@@ -1,20 +1,20 @@
 import process from 'node:process';
 
-// 1. Handling POSIX signal
+// 1. Menangani sinyal POSIX sistem operasi
 process.on('SIGINT', (signal) => {
   console.log('Received signal:', signal);
 });
 
-// 2. Edge-case: intercepting unhandled Promise rejection
+// 2. Edge-case: mencegat Promise rejection yang tidak tertangani (unhandledRejection)
 process.on('unhandledRejection', (reason) => {
   console.error('Handled unhandledRejection safely:', reason.message);
   process.exitCode = 1;
 });
 
-// Test signal
+// Uji coba sinyal
 process.emit('SIGINT', 'SIGINT');
 
-// Test edge-case rejection
+// Uji coba edge-case rejection
 const rejectedPromise = Promise.reject(new Error('Database connection failed'));
 process.emit(
   'unhandledRejection',

@@ -48,19 +48,24 @@ import process from 'node:process';
  * @returns {{ port: number, env: string, isProduction: boolean }}
  */
 export function resolveAppConfig(defaultPort = 3000) {
+  // 1. Ekstraksi argumen baris perintah (--port <value>)
   const args = process.argv.slice(2);
   const indexPort = args.indexOf('--port');
   const cliPort = indexPort !== -1 ? args[indexPort + 1] : undefined;
 
+  // 2. Tentukan nilai port berdasarkan hierarki: CLI flag > process.env > defaultPort
   const port = Number(cliPort ?? process.env.PORT ?? defaultPort);
 
+  // 3. Validasi batasan nomor port (1 - 65535)
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('Invalid port number');
   }
 
+  // 4. Deteksi mode lingkungan runtime
   const env = process.env.NODE_ENV || 'development';
   const isProduction = env === 'production';
 
+  // 5. Kembalikan objek konfigurasi
   return {
     port,
     env,

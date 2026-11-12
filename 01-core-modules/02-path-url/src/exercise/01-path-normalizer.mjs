@@ -50,6 +50,7 @@ import path from 'node:path';
  * @returns {{ fullPath: string, isAbsolute: boolean, dirname: string, basename: string, extname: string, filenameWithoutExt: string }}
  */
 export function normalizeAssetPath(baseDir, relativeFile) {
+  // 1. Validasi input: pastikan baseDir dan relativeFile berupa string non-kosong
   const falseBaseDir = typeof baseDir !== 'string' || baseDir.trim() === '';
   const falseRelativeFile =
     typeof relativeFile !== 'string' || relativeFile.trim() === '';
@@ -60,6 +61,7 @@ export function normalizeAssetPath(baseDir, relativeFile) {
     );
   }
 
+  // 2. Gabungkan path dan bedah komponennya (dirname, basename, extname)
   const fullPath = path.join(baseDir, relativeFile);
   const isAbsolute = path.isAbsolute(fullPath);
   const dirname = path.dirname(fullPath);
@@ -67,6 +69,7 @@ export function normalizeAssetPath(baseDir, relativeFile) {
   const extname = path.extname(fullPath);
   const filenameWithoutExt = path.basename(fullPath, extname);
 
+  // 3. Kembalikan objek metadata path
   return {
     fullPath,
     isAbsolute,

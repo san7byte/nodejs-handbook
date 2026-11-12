@@ -10,17 +10,20 @@ let isShuttingDown = false;
 
 function setupGracefulShutdown(server) {
   function shutdown(signal) {
+    // Mencegah penanganan sinyal ganda (idempoten)
     if (isShuttingDown) return;
     isShuttingDown = true;
 
     console.log(`Received ${signal}. Closing server...`);
 
+    // Timer batas waktu: hentikan paksa jika proses pembersihan menggantung
     const forceTimer = setTimeout(() => {
       console.error('Force shutdown after timeout.');
       process.exit(1);
     }, 5000);
     forceTimer.unref();
 
+    // Hentikan penerimaan koneksi baru dan selesaikan request aktif
     server.close(() => {
       console.log('HTTP server closed cleanly.');
       process.exitCode = 0;
