@@ -58,5 +58,62 @@ import { EventEmitter } from 'node:events';
  * @returns {Promise<any[]>}
  */
 export async function waitForEvent(emitter, eventName, timeoutMs) {
-  throw new Error('Not implemented');
+  // 1. Validasi emitter wajib berupa instance EventEmitter
+  if (!(emitter instanceof EventEmitter)) {
+    throw new TypeError('Invalid emitter: must be an instance of EventEmitter');
+  }
+
+  // 2. Validasi eventName wajib berupa string non-kosong
+  if (typeof eventName !== 'string' || eventName.trim() === '') {
+    throw new TypeError('Invalid eventName: must be a non-empty string');
+  }
+
+  // 3. Validasi timeoutMs opsional: jika diisi, wajib berupa angka positif berhingga
+  if (timeoutMs !== undefined) {
+    if (
+      typeof timeoutMs !== 'number' ||
+      !Number.isFinite(timeoutMs) ||
+      timeoutMs <= 0
+    ) {
+      throw new RangeError('Invalid timeoutMs: must be a positive number');
+    }
+  }
+
+  // 4. Kembalikan Promise yang menjembatani siklus hidup event ke pola async/await
+  return new Promise((resolve, reject) => {
+    let timerId;
+
+    // Fungsi pembersihan terpusat untuk mencegah memory leak
+    const cleanup = () => {
+      if (timerId !== undefined) {
+        clearTimeout(timerId);
+      }
+      emitter.off(eventName, funcListener);
+      emitter.off('error', errorHandler);
+    };
+
+    // Handler saat event target berhasil terpancar (Normal path)
+    const funcListener = (...args) => {
+      cleanup();
+      resolve([...args]);
+    };
+
+    // Handler saat emitter memancarkan error sebelum event muncul (Error path)
+    const errorHandler = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    // Pasang listener pada instance emitter
+    emitter.on(eventName, funcListener);
+    emitter.on('error', errorHandler);
+
+    // Pasang timer jika batas waktu timeoutMs ditentukan
+    if (timeoutMs !== undefined) {
+      timerId = setTimeout(() => {
+        cleanup();
+        reject(new Error('Event wait timed out'));
+      }, timeoutMs);
+    }
+  });
 }

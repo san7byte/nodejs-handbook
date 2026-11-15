@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, on } from 'node:events';
 
 /**
  * ============================================================================
@@ -66,5 +66,60 @@ import { EventEmitter } from 'node:events';
  * @returns {Promise<any[][]>}
  */
 export async function collectEventStream(emitter, eventName, options) {
-  throw new Error('Not implemented');
+  // 1. Validasi emitter wajib berupa instance EventEmitter
+  if (!(emitter instanceof EventEmitter)) {
+    throw new TypeError('Invalid emitter: must be an instance of EventEmitter');
+  }
+
+  // 2. Validasi eventName wajib berupa string non-kosong
+  if (typeof eventName !== 'string' || eventName.trim() === '') {
+    throw new TypeError('Invalid eventName: must be a non-empty string');
+  }
+
+  // 3. Validasi options wajib berupa objek non-null
+  if (typeof options !== 'object' || options === null) {
+    throw new TypeError('Invalid options: must be an object');
+  }
+
+  const { count, signal } = options;
+
+  // 4. Validasi count wajib berupa integer positif (> 0)
+  if (typeof count !== 'number' || !Number.isInteger(count) || count <= 0) {
+    throw new RangeError('Invalid count: must be a positive integer');
+  }
+
+  // 5. Validasi signal opsional: jika diberikan, wajib instance AbortSignal
+  if (signal !== undefined && !(signal instanceof AbortSignal)) {
+    throw new TypeError('Invalid signal: must be an AbortSignal instance');
+  }
+
+  // 6. Cek status awal: jika signal sudah di-abort sebelum pengumpulan dimulai
+  if (signal?.aborted) {
+    throw new Error('Collection aborted');
+  }
+
+  const results = [];
+
+  // 7. Konsumsi stream event secara asinkron menggunakan iterator bawaan on()
+  try {
+    for await (const entry of on(emitter, eventName, { signal })) {
+      results.push(entry);
+
+      // Hentikan iterasi saat jumlah target count sudah terpenuhi
+      // Perintah break secara otomatis mencopot listener dari emitter
+      if (results.length === count) {
+        break;
+      }
+    }
+
+    return results;
+  } catch (error) {
+    // Tangani pembatalan AbortSignal dengan format pesan error yang disyaratkan
+    if (error.name === 'AbortError') {
+      throw new Error('Collection aborted');
+    }
+
+    // Teruskan error dari emitter (misalnya pemancaran event 'error')
+    throw error;
+  }
 }

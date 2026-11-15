@@ -73,6 +73,49 @@ import { EventEmitter } from 'node:events';
  * └───────────┴────────────────────────────────────────────────────────┴──────────────────────────────────────┴───────────────────────────────────────────────────────┘
  */
 
+// --- Helper Predikat Validasi Input ---
+const isEmptyString = (v) => typeof v !== 'string' || v.trim() === '';
+const isNotFunction = (v) => typeof v !== 'function';
+const isNotObject = (v) => typeof v !== 'object' || v === null;
+const isNotPositiveInteger = (v) => !Number.isInteger(v) || v <= 0;
+
+// Validasi nama event: wajib berupa string non-kosong
+function validateEventName(eventName) {
+  if (isEmptyString(eventName)) {
+    throw new TypeError('Invalid eventName: must be a non-empty string');
+  }
+}
+
+// Validasi handler: wajib berupa fungsi callback
+function validateHandler(handler) {
+  if (isNotFunction(handler)) {
+    throw new TypeError('Invalid handler: must be a function');
+  }
+}
+
+// Validasi options: wajib berupa objek dan bukan null
+function validateOptions(options) {
+  if (isNotObject(options)) {
+    throw new TypeError('Invalid options: must be an object');
+  }
+}
+
+// Validasi maxListeners: jika diisi, wajib berupa integer positif (> 0) dengan default 10
+function validateMaxListeners(maxListeners = 10) {
+  if (isNotPositiveInteger(maxListeners)) {
+    throw new RangeError('Invalid maxListeners: must be a positive integer');
+  }
+  return maxListeners;
+}
+
+// Pemetaan kombinasi opsi priority dan once ke method EventEmitter terkait
+const METHODS = {
+  'false:false': 'on',
+  'false:true': 'once',
+  'true:false': 'prependListener',
+  'true:true': 'prependOnceListener',
+};
+
 export class ResilientEventBus extends EventEmitter {
   /**
    * Menginisialisasi event bus dengan kuota listener dan pelacak error.
@@ -80,8 +123,23 @@ export class ResilientEventBus extends EventEmitter {
    * @param {{ maxListeners?: number }} [options={}]
    */
   constructor(options = {}) {
+    // 1. Inisialisasi class induk EventEmitter
     super();
-    throw new Error('Not implemented');
+
+    // 2. Validasi dan tetapkan batas maksimal listener untuk mencegah memory leak
+    const maxListeners = validateMaxListeners(options.maxListeners);
+    this.setMaxListeners(maxListeners);
+
+    // 3. Siapkan array penyimpan riwayat telemetri error
+    this.errorHistory = [];
+
+    // 4. Daftarkan errorMonitor internal untuk menyadap seluruh error tanpa mengonsumsinya
+    this.on(EventEmitter.errorMonitor, (err) => {
+      this.errorHistory.push({
+        message: err.message,
+        timestamp: Date.now(),
+      });
+    });
   }
 
   /**
@@ -93,7 +151,18 @@ export class ResilientEventBus extends EventEmitter {
    * @returns {() => void}
    */
   subscribe(eventName, handler, options = {}) {
-    throw new Error('Not implemented');
+    // 1. Validasi seluruh argumen input secara defensif
+    validateEventName(eventName);
+    validateHandler(handler);
+    validateOptions(options);
+
+    // 2. Tentukan method pendaftaran berdasarkan kombinasi opsi priority dan once
+    const { priority = false, once = false } = options;
+    const methodName = METHODS[`${priority}:${once}`];
+    this[methodName](eventName, handler);
+
+    // 3. Kembalikan fungsi pencopot (uninstaller) untuk memudahkan unsubscribe
+    return () => this.off(eventName, handler);
   }
 
   /**
@@ -104,7 +173,11 @@ export class ResilientEventBus extends EventEmitter {
    * @returns {boolean}
    */
   publish(eventName, ...args) {
-    throw new Error('Not implemented');
+    // 1. Validasi nama event yang akan dipancarkan
+    validateEventName(eventName);
+
+    // 2. Pancarkan event beserta data argumen ke seluruh listener aktif
+    return this.emit(eventName, ...args);
   }
 
   /**
@@ -113,7 +186,27 @@ export class ResilientEventBus extends EventEmitter {
    * @returns {{ maxListeners: number, activeEvents: string[], listenerCounts: Record<string, number>, totalErrors: number }}
    */
   getDiagnostics() {
-    throw new Error('Not implemented');
+    const activeEvents = [];
+    const listenerCounts = {};
+
+    // 1. Periksa seluruh event yang terdaftar pada instance bus
+    for (const name of this.eventNames()) {
+      const count = this.listenerCount(name);
+
+      // Hanya masukkan nama event bertipe string dan memiliki listener aktif > 0
+      if (typeof name === 'string' && count > 0) {
+        activeEvents.push(name);
+        listenerCounts[name] = count;
+      }
+    }
+
+    // 2. Kembalikan rekap status kesehatan dan metrik bus saat ini
+    return {
+      maxListeners: this.getMaxListeners(),
+      activeEvents,
+      listenerCounts,
+      totalErrors: this.errorHistory.length,
+    };
   }
 
   /**
@@ -122,6 +215,10 @@ export class ResilientEventBus extends EventEmitter {
    * @returns {void}
    */
   destroy() {
-    throw new Error('Not implemented');
+    // 1. Copot seluruh listener di seluruh event
+    this.removeAllListeners();
+
+    // 2. Kosongkan riwayat error
+    this.errorHistory = [];
   }
 }
