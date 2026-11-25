@@ -3,17 +3,22 @@ import { promisify } from 'node:util';
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
-const brotliCompress = promisify(zlib.brotliCompress);
-const brotliDecompress = promisify(zlib.brotliDecompress);
 
-const sampleText = 'Node.js Handbook Compression '.repeat(14);
-const compressedGzip = await gzip(Buffer.from(sampleText));
-const decompressedGzip = await gunzip(compressedGzip);
-const compressedBrotli = await brotliCompress(Buffer.from(sampleText));
-const decompressedBrotli = await brotliDecompress(compressedBrotli);
+// Normal: kompresi dan dekompresi data buffer
+const sourceText = 'Fast and scalable backend systems with Node.js';
+const sourceBuffer = Buffer.from(sourceText);
 
-console.log('Original size (bytes):', Buffer.from(sampleText).length);
-console.log('Gzip compressed size:', compressedGzip.length);
-console.log('Gzip decompressed matches:', decompressedGzip.toString() === sampleText);
-console.log('Brotli compressed size:', compressedBrotli.length);
-console.log('Brotli decompressed matches:', decompressedBrotli.toString() === sampleText);
+const compressed = await gzip(sourceBuffer, { level: 6 });
+const decompressed = await gunzip(compressed);
+
+console.log('Original bytes:', sourceBuffer.length);
+console.log('Compressed bytes:', compressed.length);
+console.log('Decompressed text:', decompressed.toString());
+
+// Edge-case: penanganan buffer terkompresi yang rusak atau tidak valid
+const corruptedBuffer = Buffer.from('not-a-valid-gzip-stream');
+try {
+  await gunzip(corruptedBuffer);
+} catch (err) {
+  console.log('Corrupted data error code:', err.code);
+}
