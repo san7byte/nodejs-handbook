@@ -1,4 +1,5 @@
 import zlib from 'node:zlib';
+import { promisify } from 'node:util';
 
 /**
  * ============================================================================
@@ -47,6 +48,14 @@ import zlib from 'node:zlib';
  * └───────────┴───────────────────────────────────────────────────────┴────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘
  */
 
+// Ubah zlib.gzip berbasis callback menjadi fungsi Promise agar mendukung async/await
+const gzip = promisify(zlib.gzip);
+
+// Helper validasi: cek tipe input, pastikan tidak kosong, dan pastikan level berada di rentang 1–9
+const isStringOrBuffer = (v) => typeof v === 'string' || Buffer.isBuffer(v);
+const isNotEmpty = (v) => v.length > 0;
+const isValidLevel = (v) => Number.isInteger(v) && v >= 1 && v <= 9;
+
 /**
  * Mengompresi payload teks atau buffer ke format biner Gzip.
  *
@@ -55,5 +64,24 @@ import zlib from 'node:zlib';
  * @returns {Promise<Buffer>}
  */
 export async function compressPayload(data, options = {}) {
-  throw new Error('Not implemented');
+  // Guard clause: tolak tipe data selain string atau Buffer
+  if (!isStringOrBuffer(data)) {
+    throw new TypeError('Input must be a string or Buffer');
+  }
+
+  // Guard clause: tolak string kosong ('') atau Buffer berukuran 0 byte
+  if (!isNotEmpty(data)) {
+    throw new Error('Data cannot be empty');
+  }
+
+  // Ambil level kompresi dari opsi dengan nilai default 6 jika tidak diisi
+  const { level = 6 } = options ?? {};
+
+  // Pastikan level kompresi berupa bilangan bulat valid (1–9 inklusif)
+  if (!isValidLevel(level)) {
+    throw new RangeError('Invalid compression level');
+  }
+
+  // Jalankan kompresi Gzip asinkron (zlib.gzip menerima string maupun Buffer langsung)
+  return gzip(data, { level });
 }

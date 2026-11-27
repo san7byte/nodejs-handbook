@@ -9,7 +9,11 @@ const server = http.createServer(async (req, res) => {
   const payload = JSON.stringify({
     status: 'success',
     timestamp: 1774300800000,
-    records: Array.from({ length: 50 }, (_, i) => ({ id: i + 1, metric: 'latency_ms', value: 12.5 })),
+    records: Array.from({ length: 50 }, (_, i) => ({
+      id: i + 1,
+      metric: 'latency_ms',
+      value: 12.5,
+    })),
   });
 
   res.setHeader('Content-Type', 'application/json');
@@ -50,19 +54,28 @@ server.listen(0, async () => {
   const brRes = await fetch(`http://localhost:${port}`, {
     headers: { 'Accept-Encoding': 'br' },
   });
-  console.log('Client 1 Content-Encoding:', brRes.headers.get('content-encoding'));
+  console.log(
+    'Client 1 Content-Encoding:',
+    brRes.headers.get('content-encoding'),
+  );
 
   // Klien 2: meminta kompresi Gzip
   const gzRes = await fetch(`http://localhost:${port}`, {
     headers: { 'Accept-Encoding': 'gzip' },
   });
-  console.log('Client 2 Content-Encoding:', gzRes.headers.get('content-encoding'));
+  console.log(
+    'Client 2 Content-Encoding:',
+    gzRes.headers.get('content-encoding'),
+  );
 
   // Klien 3: tidak mendukung kompresi (identity)
   const plainRes = await fetch(`http://localhost:${port}`, {
     headers: { 'Accept-Encoding': 'identity' },
   });
-  console.log('Client 3 Content-Encoding:', plainRes.headers.get('content-encoding') ?? 'identity');
+  console.log(
+    'Client 3 Content-Encoding:',
+    plainRes.headers.get('content-encoding') ?? 'identity',
+  );
 
   const json = await gzRes.json();
   console.log('Decompressed records count:', json.records.length);

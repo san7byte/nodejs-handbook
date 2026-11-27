@@ -5,13 +5,15 @@ const brotliCompress = promisify(zlib.brotliCompress);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
 // Normal: kompresi rasio tinggi menggunakan mode teks Brotli
-const payload = 'Node.js handbook explains Brotli compression parameters '.repeat(10);
+const payload =
+  'Node.js handbook explains Brotli compression parameters '.repeat(10);
 const inputBuffer = Buffer.from(payload);
 
 const compressed = await brotliCompress(inputBuffer, {
   params: {
     [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
-    [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_DEFAULT_QUALITY,
+    [zlib.constants.BROTLI_PARAM_QUALITY]:
+      zlib.constants.BROTLI_DEFAULT_QUALITY,
   },
 });
 const decompressed = await brotliDecompress(compressed);

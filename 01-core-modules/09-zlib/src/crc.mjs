@@ -10,7 +10,10 @@ const chunk2 = Buffer.from('payload 2026');
 const incrementalChecksum = zlib.crc32(chunk2, zlib.crc32(chunk1));
 
 console.log('Single-pass CRC32:', checksum);
-console.log('Incremental matches single-pass:', incrementalChecksum === checksum);
+console.log(
+  'Incremental matches single-pass:',
+  incrementalChecksum === checksum,
+);
 
 // Edge-case: deteksi modifikasi data melalui ketidakcocokan nilai checksum
 const tamperedData = Buffer.from('Database backup payload 2027');

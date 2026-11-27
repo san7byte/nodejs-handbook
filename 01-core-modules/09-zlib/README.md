@@ -9,9 +9,9 @@ Pengiriman payload data teks mentah berukuran besar pada REST API atau komunikas
 ## Konsep Inti
 
 - Modul bawaan `node:zlib` diimpor eksplisit menggunakan `import zlib from 'node:zlib'`.
-- Gzip dan Deflate adalah algoritma kompresi standar berbasis DEFLATE yang didukung secara universal oleh hampir semua HTTP client dan browser.
+- Gzip dan Deflate menggunakan mesin algoritma kompresi yang sama (DEFLATE), namun Deflate lebih ramping (overhead 6 byte header+footer) dibanding Gzip (overhead 18 byte dengan metadata lengkap).
 - Brotli menawarkan rasio kompresi lebih efisien daripada Gzip untuk data teks, namun membutuhkan alokasi CPU lebih besar saat proses kompresi awal.
-- Streaming kompresi menggunakan Transform stream (seperti `createGzip` atau `createBrotliCompress`) wajib dipadukan dengan `pipeline()` untuk menjaga kestabilan memori melalui manajemen backpressure.
+- Streaming kompresi menggunakan Transform stream (seperti `createGzip`, `createDeflate`, atau `createBrotliCompress`) wajib dipadukan dengan `pipeline()` untuk menjaga kestabilan memori melalui manajemen backpressure.
 - Fungsi `zlib.crc32()` menghitung nilai checksum 32-bit secara native untuk mendeteksi korupsi atau manipulasi data biner sebelum dan sesudah transmisi.
 
 ## Langkah 1: Kompresi dan Dekompresi Buffer dengan Gzip
@@ -21,29 +21,29 @@ Kita mengompresi payload data dalam memori menggunakan algoritma Gzip, memulihka
 Buat file `gzip.mjs`.
 
 ```js
-import zlib from 'node:zlib';
-import { promisify } from 'node:util';
+import zlib from "node:zlib";
+import { promisify } from "node:util";
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
 
 // Normal: compress and decompress buffer data
-const sourceText = 'Fast and scalable backend systems with Node.js';
+const sourceText = "Fast and scalable backend systems with Node.js";
 const sourceBuffer = Buffer.from(sourceText);
 
 const compressed = await gzip(sourceBuffer, { level: 6 });
 const decompressed = await gunzip(compressed);
 
-console.log('Original bytes:', sourceBuffer.length);
-console.log('Compressed bytes:', compressed.length);
-console.log('Decompressed text:', decompressed.toString());
+console.log("Original bytes:", sourceBuffer.length);
+console.log("Compressed bytes:", compressed.length);
+console.log("Decompressed text:", decompressed.toString());
 
 // Edge-case: handle corrupted or invalid compressed buffer
-const corruptedBuffer = Buffer.from('not-a-valid-gzip-stream');
+const corruptedBuffer = Buffer.from("not-a-valid-gzip-stream");
 try {
   await gunzip(corruptedBuffer);
 } catch (err) {
-  console.log('Corrupted data error code:', err.code);
+  console.log("Corrupted data error code:", err.code);
 }
 ```
 
@@ -64,40 +64,95 @@ Corrupted data error code: Z_DATA_ERROR
 
 Fungsi `zlib.gzip()` mengompresi buffer ke format Gzip standar dengan opsi level kompresi 1 hingga 9. Jika buffer yang diberikan ke `zlib.gunzip()` tidak memiliki header Gzip valid atau terpotong, Node.js melempar error dengan kode `Z_DATA_ERROR` yang harus ditangkap menggunakan blok `try...catch`.
 
-## Langkah 2: Kompresi Rasio Tinggi dengan Brotli
+## Langkah 2: Kompresi Ringan dengan Deflate dan Inflate
+
+Kita mengompresi payload menggunakan format Deflate (zlib) yang memiliki header lebih tipis dibanding Gzip, lalu memulihkannya kembali dengan `inflate` serta menangani data yang rusak.
+
+Buat file `deflate.mjs`.
+
+```js
+import zlib from "node:zlib";
+import { promisify } from "node:util";
+
+const deflate = promisify(zlib.deflate);
+const inflate = promisify(zlib.inflate);
+const gzip = promisify(zlib.gzip);
+
+// Normal: compress and decompress with Deflate and compare overhead against Gzip
+const sourceText = "Node.js compression ".repeat(5);
+const sourceBuffer = Buffer.from(sourceText);
+
+const deflated = await deflate(sourceBuffer, { level: 6 });
+const gzipped = await gzip(sourceBuffer, { level: 6 });
+const inflated = await inflate(deflated);
+
+console.log("Original bytes:", sourceBuffer.length);
+console.log("Deflate bytes:", deflated.length);
+console.log("Gzip bytes:", gzipped.length);
+console.log("Inflated matches:", inflated.toString() === sourceText);
+
+// Edge-case: handle corrupted or invalid Deflate buffer
+try {
+  await inflate(Buffer.from("invalid-deflate-data"));
+} catch (err) {
+  console.log("Invalid deflate error code:", err.code);
+}
+```
+
+Jalankan file:
+
+```bash
+node deflate.mjs
+```
+
+Output:
+
+```
+Original bytes: 100
+Deflate bytes: 31
+Gzip bytes: 43
+Inflated matches: true
+Invalid deflate error code: Z_DATA_ERROR
+```
+
+Format `deflate` dan `gzip` memakai mesin algoritma DEFLATE yang sama, namun `deflate` hanya menambahkan 6 byte bungkus (2 byte header dan 4 byte checksum Adler-32), sedangkan `gzip` menambahkan 18 byte bungkus sehingga ukuran akhir `deflate` lebih kecil 12 byte. Untuk mendekompresi hasil `zlib.deflate()`, kita wajib memakai pasangannya yaitu `zlib.inflate()`, dan error `Z_DATA_ERROR` akan dilempar jika header tidak valid.
+
+## Langkah 3: Kompresi Rasio Tinggi dengan Brotli
 
 Kita memanfaatkan algoritma Brotli untuk memperoleh rasio kompresi maksimal pada payload teks dan membatasi alokasi memori dekompresi untuk mencegah serangan denial-of-service.
 
 Buat file `brotli.mjs`.
 
 ```js
-import zlib from 'node:zlib';
-import { promisify } from 'node:util';
+import zlib from "node:zlib";
+import { promisify } from "node:util";
 
 const brotliCompress = promisify(zlib.brotliCompress);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
 // Normal: high-ratio compression with Brotli text mode
-const payload = 'Node.js handbook explains Brotli compression parameters '.repeat(10);
+const payload =
+  "Node.js handbook explains Brotli compression parameters ".repeat(10);
 const inputBuffer = Buffer.from(payload);
 
 const compressed = await brotliCompress(inputBuffer, {
   params: {
     [zlib.constants.BROTLI_PARAM_MODE]: zlib.constants.BROTLI_MODE_TEXT,
-    [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_DEFAULT_QUALITY,
+    [zlib.constants.BROTLI_PARAM_QUALITY]:
+      zlib.constants.BROTLI_DEFAULT_QUALITY,
   },
 });
 const decompressed = await brotliDecompress(compressed);
 
-console.log('Original length:', inputBuffer.length);
-console.log('Brotli compressed length:', compressed.length);
-console.log('Restored text matches:', decompressed.toString() === payload);
+console.log("Original length:", inputBuffer.length);
+console.log("Brotli compressed length:", compressed.length);
+console.log("Restored text matches:", decompressed.toString() === payload);
 
 // Edge-case: zip-bomb defense using maxOutputLength limit
 try {
   await brotliDecompress(compressed, { maxOutputLength: 100 });
 } catch (err) {
-  console.log('Zip-bomb safeguard triggered:', err.code);
+  console.log("Zip-bomb safeguard triggered:", err.code);
 }
 ```
 
@@ -118,19 +173,23 @@ Zip-bomb safeguard triggered: ERR_BUFFER_TOO_LARGE
 
 Konfigurasi parameter Brotli seperti mode teks dan tingkat kualitas memungkinkan optimasi kompresi secara mendalam. Pada kondisi edge-case di mana payload hasil dekompresi melampaui ambang batas keamanan yang ditentukan di `maxOutputLength`, Node.js langsung menghentikan dekompresi dengan kode `ERR_BUFFER_TOO_LARGE` untuk melindungi memori server dari decompression bomb.
 
-## Langkah 3: Streaming Kompresi dengan Transform Stream
+## Langkah 4: Streaming Kompresi dengan Transform Stream
 
 Kita mengalirkan chunk data secara bertahap melalui Transform stream `createGzip` dan `createGunzip` menggunakan `pipeline()` untuk menjaga penggunaan memori tetap rendah dan menangani kegagalan aliran data.
 
 Buat file `stream.mjs`.
 
 ```js
-import zlib from 'node:zlib';
-import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
+import zlib from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 
 // Normal: stream data chunks through createGzip and createGunzip
-const sourceChunks = ['Stream chunk 1 | ', 'Stream chunk 2 | ', 'Stream chunk 3'];
+const sourceChunks = [
+  "Stream chunk 1 | ",
+  "Stream chunk 2 | ",
+  "Stream chunk 3",
+];
 const outputChunks = [];
 
 await pipeline(
@@ -141,10 +200,10 @@ await pipeline(
     for await (const chunk of source) {
       outputChunks.push(chunk.toString());
     }
-  }
+  },
 );
 
-console.log('Streamed result:', outputChunks.join(''));
+console.log("Streamed result:", outputChunks.join(""));
 
 // Edge-case: handle stream pipeline error during corrupted chunk ingestion
 const corruptSource = [Buffer.from([0x1f, 0x8b, 0xff, 0xff])];
@@ -156,10 +215,10 @@ try {
       for await (const chunk of source) {
         // Discard chunk
       }
-    }
+    },
   );
 } catch (err) {
-  console.log('Pipeline error caught:', err.code);
+  console.log("Pipeline error caught:", err.code);
 }
 ```
 
@@ -178,20 +237,20 @@ Pipeline error caught: Z_DATA_ERROR
 
 Fungsi `zlib.createGzip()` dan `zlib.createGunzip()` menghasilkan instance Transform stream yang memproses data per potongan buffer tanpa menumpuk seluruh file di memori. Membungkus aliran stream ke dalam `pipeline()` memastikan seluruh stream segera ditutup dan dibersihkan ketika terjadi kegagalan chunk atau error dekompresi.
 
-## Langkah 4: Dekompresi Fleksibel Menggunakan createUnzip
+## Langkah 5: Dekompresi Stream Deflate dan Gzip Otomatis
 
-Kita memanfaatkan `createUnzip` untuk mendekompresi payload secara otomatis tanpa perlu mengetahui terlebih dahulu apakah sumber data dikompresi dengan format Gzip atau Deflate.
+Kita memanfaatkan `createInflate` untuk stream Deflate murni dan `createUnzip` untuk mendekompresi stream secara otomatis tanpa perlu mengetahui apakah sumber data dikompresi dengan format Gzip atau Deflate.
 
 Buat file `unzip.mjs`.
 
 ```js
-import zlib from 'node:zlib';
-import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
+import zlib from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 
-async function streamDecompress(stream) {
+async function streamDecompress(stream, decompressor) {
   const chunks = [];
-  await pipeline(stream, zlib.createUnzip(), async function* (source) {
+  await pipeline(stream, decompressor, async function* (source) {
     for await (const chunk of source) {
       chunks.push(chunk);
     }
@@ -199,42 +258,56 @@ async function streamDecompress(stream) {
   return Buffer.concat(chunks).toString();
 }
 
-// Normal: createUnzip transparently decompresses both Deflate and Gzip streams
-const sampleText = 'Universal decompression with createUnzip';
+// Normal: createInflate for pure Deflate and createUnzip for auto-detecting Deflate/Gzip
+const sampleText = "Universal decompression with createUnzip";
 
-// 1. Deflate compression
+// 1. Deflate stream compression
 const deflateChunks = [];
 await pipeline(
   Readable.from(sampleText),
   zlib.createDeflate(),
   async function* (source) {
     for await (const chunk of source) deflateChunks.push(chunk);
-  }
+  },
 );
 const deflatedBuffer = Buffer.concat(deflateChunks);
 
-// 2. Gzip compression
+// 2. Gzip stream compression
 const gzipChunks = [];
 await pipeline(
   Readable.from(sampleText),
   zlib.createGzip(),
   async function* (source) {
     for await (const chunk of source) gzipChunks.push(chunk);
-  }
+  },
 );
 const gzippedBuffer = Buffer.concat(gzipChunks);
 
-const fromDeflate = await streamDecompress(Readable.from(deflatedBuffer));
-const fromGzip = await streamDecompress(Readable.from(gzippedBuffer));
+const fromInflate = await streamDecompress(
+  Readable.from(deflatedBuffer),
+  zlib.createInflate(),
+);
+const fromDeflateUnzip = await streamDecompress(
+  Readable.from(deflatedBuffer),
+  zlib.createUnzip(),
+);
+const fromGzipUnzip = await streamDecompress(
+  Readable.from(gzippedBuffer),
+  zlib.createUnzip(),
+);
 
-console.log('Decompressed from Deflate:', fromDeflate);
-console.log('Decompressed from Gzip:', fromGzip);
+console.log("Decompressed via createInflate:", fromInflate);
+console.log("Decompressed Deflate via createUnzip:", fromDeflateUnzip);
+console.log("Decompressed Gzip via createUnzip:", fromGzipUnzip);
 
 // Edge-case: invalid header stream passed to createUnzip
 try {
-  await streamDecompress(Readable.from(Buffer.from('not-a-valid-archive-header')));
+  await streamDecompress(
+    Readable.from(Buffer.from("not-a-valid-archive-header")),
+    zlib.createUnzip(),
+  );
 } catch (err) {
-  console.log('Auto-unzip error code:', err.code);
+  console.log("Auto-unzip error code:", err.code);
 }
 ```
 
@@ -247,41 +320,45 @@ node unzip.mjs
 Output:
 
 ```
-Decompressed from Deflate: Universal decompression with createUnzip
-Decompressed from Gzip: Universal decompression with createUnzip
+Decompressed via createInflate: Universal decompression with createUnzip
+Decompressed Deflate via createUnzip: Universal decompression with createUnzip
+Decompressed Gzip via createUnzip: Universal decompression with createUnzip
 Auto-unzip error code: Z_DATA_ERROR
 ```
 
-Instance Transform stream dari `zlib.createUnzip()` mendeteksi header secara otomatis untuk menentukan apakah stream terkompresi memakai Gzip atau Deflate. Jika header data yang masuk tidak cocok dengan signature format mana pun, stream akan memancarkan error `Z_DATA_ERROR` yang tertangkap secara aman oleh promise `pipeline`.
+Fungsi `zlib.createDeflate()` dan `zlib.createInflate()` adalah pasangan Transform stream untuk mengompresi dan mendekompresi format Deflate secara bertahap, sedangkan `zlib.createUnzip()` secara otomatis mendeteksi header apakah stream yang masuk memakai format Gzip atau Deflate. Jika header data yang masuk tidak cocok dengan signature format mana pun, stream akan memancarkan error `Z_DATA_ERROR` yang tertangkap aman oleh `pipeline`.
 
-## Langkah 5: Verifikasi Integritas Data Menggunakan CRC32
+## Langkah 6: Verifikasi Integritas Data Menggunakan CRC32
 
 Kita menghitung checksum CRC32 secara langsung maupun bertahap untuk memvalidasi bahwa data biner tidak mengalami korupsi atau perubahan selama transmisi.
 
 Buat file `crc.mjs`.
 
 ```js
-import zlib from 'node:zlib';
+import zlib from "node:zlib";
 
 // Normal: compute CRC32 checksum for buffer and verify data integrity
-const originalData = Buffer.from('Database backup payload 2026');
+const originalData = Buffer.from("Database backup payload 2026");
 const checksum = zlib.crc32(originalData);
 
 // Incremental checksum calculation across stream chunks
-const chunk1 = Buffer.from('Database backup ');
-const chunk2 = Buffer.from('payload 2026');
+const chunk1 = Buffer.from("Database backup ");
+const chunk2 = Buffer.from("payload 2026");
 const incrementalChecksum = zlib.crc32(chunk2, zlib.crc32(chunk1));
 
-console.log('Single-pass CRC32:', checksum);
-console.log('Incremental matches single-pass:', incrementalChecksum === checksum);
+console.log("Single-pass CRC32:", checksum);
+console.log(
+  "Incremental matches single-pass:",
+  incrementalChecksum === checksum,
+);
 
 // Edge-case: detect altered data through checksum mismatch
-const tamperedData = Buffer.from('Database backup payload 2027');
+const tamperedData = Buffer.from("Database backup payload 2027");
 const tamperedChecksum = zlib.crc32(tamperedData);
 const isIntact = tamperedChecksum === checksum;
 
-console.log('Tampered data is valid:', isIntact);
-console.log('Empty buffer CRC32:', zlib.crc32(Buffer.alloc(0)));
+console.log("Tampered data is valid:", isIntact);
+console.log("Empty buffer CRC32:", zlib.crc32(Buffer.alloc(0)));
 ```
 
 Jalankan file:
@@ -303,18 +380,20 @@ Method `zlib.crc32()` menghasilkan bilangan unsigned 32-bit yang merepresentasik
 
 ## Referensi API
 
-| API | Fungsi |
-|---|---|
-| `zlib.gzip(buffer[, options], callback)` | Mengompresi buffer data menggunakan algoritma Gzip. `buffer` (`Buffer \| string \| DataView`, wajib) adalah data sumber, `options` (`object`, opsional) mengatur level dan konfigurasi kompresi, `callback` (`Function`, wajib) menerima hasil buffer terkompresi. Returns `void` (atau `Promise<Buffer>` via promisify). |
-| `zlib.gunzip(buffer[, options], callback)` | Mendekompresi buffer data Gzip kembali ke bentuk aslinya. `buffer` (`Buffer \| TypedArray \| DataView`, wajib) adalah data biner terkompresi, `options` (`object`, opsional) mengatur batas buffer seperti `maxOutputLength`, `callback` (`Function`, wajib) menerima hasil dekompresi. Returns `void` (atau `Promise<Buffer>` via promisify). |
-| `zlib.brotliCompress(buffer[, options], callback)` | Mengompresi buffer data menggunakan algoritma Brotli dengan rasio kompresi tinggi. `buffer` (`Buffer \| string \| DataView`, wajib) adalah data sumber, `options` (`object`, opsional) berisi dictionary `params` parameter Brotli, `callback` (`Function`, wajib) menerima hasil kompresi. Returns `void` (atau `Promise<Buffer>` via promisify). |
-| `zlib.brotliDecompress(buffer[, options], callback)` | Mendekompresi buffer data terkompresi Brotli. `buffer` (`Buffer \| TypedArray \| DataView`, wajib) adalah data sumber, `options` (`object`, opsional) mengatur batasan alokasi, `callback` (`Function`, wajib) menerima buffer hasil ekstraksi. Returns `void` (atau `Promise<Buffer>` via promisify). |
-| `zlib.createGzip([options])` | Membuat instance Transform stream untuk mengompresi aliran data menggunakan algoritma Gzip. `options` (`object`, opsional) mengatur konfigurasi stream seperti `level` dan `chunkSize`. Returns `Gzip` (Transform stream). |
-| `zlib.createGunzip([options])` | Membuat instance Transform stream untuk mendekompresi aliran data Gzip secara bertahap. `options` (`object`, opsional) mengatur parameter stream. Returns `Gunzip` (Transform stream). |
-| `zlib.createDeflate([options])` | Membuat instance Transform stream untuk mengompresi aliran data menggunakan format Deflate. `options` (`object`, opsional) mengatur parameter kompresi zlib. Returns `Deflate` (Transform stream). |
-| `zlib.createInflate([options])` | Membuat instance Transform stream untuk mendekompresi aliran data Deflate. `options` (`object`, opsional) mengatur opsi alokasi stream. Returns `Inflate` (Transform stream). |
-| `zlib.createUnzip([options])` | Membuat instance Transform stream yang secara otomatis mendeteksi format header Gzip atau Deflate untuk didekompresi. `options` (`object`, opsional) mengatur konfigurasi stream. Returns `Unzip` (Transform stream). |
-| `zlib.crc32(data[, value])` | Menghitung checksum integritas data 32-bit dari buffer atau string. `data` (`Buffer \| TypedArray \| DataView \| string`, wajib) adalah payload yang dihitung, `value` (`number`, opsional) adalah nilai CRC32 sebelumnya untuk kalkulasi bertahap. Returns `number` (bilangan bulat 32-bit). |
+| API                                                  | Fungsi                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zlib.gzip(buffer[, options], callback)`             | Mengompresi buffer data menggunakan algoritma Gzip. `buffer` (`Buffer \| string \| DataView`, wajib) adalah data sumber, `options` (`object`, opsional) mengatur level dan konfigurasi kompresi, `callback` (`Function`, wajib) menerima hasil buffer terkompresi. Returns `void` (atau `Promise<Buffer>` via promisify).                                      |
+| `zlib.gunzip(buffer[, options], callback)`           | Mendekompresi buffer data Gzip kembali ke bentuk aslinya. `buffer` (`Buffer \| TypedArray \| DataView`, wajib) adalah data biner terkompresi, `options` (`object`, opsional) mengatur batas buffer seperti `maxOutputLength`, `callback` (`Function`, wajib) menerima hasil dekompresi. Returns `void` (atau `Promise<Buffer>` via promisify).                 |
+| `zlib.deflate(buffer[, options], callback)`          | Mengompresi buffer data menggunakan format Deflate (zlib) dengan overhead header 6 byte. `buffer` (`Buffer \| string \| DataView`, wajib) adalah data sumber, `options` (`object`, opsional) mengatur level dan konfigurasi kompresi, `callback` (`Function`, wajib) menerima hasil buffer terkompresi. Returns `void` (atau `Promise<Buffer>` via promisify). |
+| `zlib.inflate(buffer[, options], callback)`          | Mendekompresi buffer data Deflate kembali ke bentuk aslinya. `buffer` (`Buffer \| TypedArray \| DataView`, wajib) adalah data biner Deflate, `options` (`object`, opsional) mengatur batas buffer seperti `maxOutputLength`, `callback` (`Function`, wajib) menerima hasil dekompresi. Returns `void` (atau `Promise<Buffer>` via promisify).                  |
+| `zlib.brotliCompress(buffer[, options], callback)`   | Mengompresi buffer data menggunakan algoritma Brotli dengan rasio kompresi tinggi. `buffer` (`Buffer \| string \| DataView`, wajib) adalah data sumber, `options` (`object`, opsional) berisi dictionary `params` parameter Brotli, `callback` (`Function`, wajib) menerima hasil kompresi. Returns `void` (atau `Promise<Buffer>` via promisify).             |
+| `zlib.brotliDecompress(buffer[, options], callback)` | Mendekompresi buffer data terkompresi Brotli. `buffer` (`Buffer \| TypedArray \| DataView`, wajib) adalah data sumber, `options` (`object`, opsional) mengatur batasan alokasi, `callback` (`Function`, wajib) menerima buffer hasil ekstraksi. Returns `void` (atau `Promise<Buffer>` via promisify).                                                         |
+| `zlib.createGzip([options])`                         | Membuat instance Transform stream untuk mengompresi aliran data menggunakan algoritma Gzip. `options` (`object`, opsional) mengatur konfigurasi stream seperti `level` dan `chunkSize`. Returns `Gzip` (Transform stream).                                                                                                                                     |
+| `zlib.createGunzip([options])`                       | Membuat instance Transform stream untuk mendekompresi aliran data Gzip secara bertahap. `options` (`object`, opsional) mengatur parameter stream. Returns `Gunzip` (Transform stream).                                                                                                                                                                         |
+| `zlib.createDeflate([options])`                      | Membuat instance Transform stream untuk mengompresi aliran data menggunakan format Deflate. `options` (`object`, opsional) mengatur parameter kompresi zlib. Returns `Deflate` (Transform stream).                                                                                                                                                             |
+| `zlib.createInflate([options])`                      | Membuat instance Transform stream untuk mendekompresi aliran data Deflate. `options` (`object`, opsional) mengatur opsi alokasi stream. Returns `Inflate` (Transform stream).                                                                                                                                                                                  |
+| `zlib.createUnzip([options])`                        | Membuat instance Transform stream yang secara otomatis mendeteksi format header Gzip atau Deflate untuk didekompresi. `options` (`object`, opsional) mengatur konfigurasi stream. Returns `Unzip` (Transform stream).                                                                                                                                          |
+| `zlib.crc32(data[, value])`                          | Menghitung checksum integritas data 32-bit dari buffer atau string. `data` (`Buffer \| TypedArray \| DataView \| string`, wajib) adalah payload yang dihitung, `value` (`number`, opsional) adalah nilai CRC32 sebelumnya untuk kalkulasi bertahap. Returns `number` (bilangan bulat 32-bit).                                                                  |
 
 ## Kasus di Aplikasi
 
@@ -325,33 +404,37 @@ Method `zlib.crc32()` menghasilkan bilangan unsigned 32-bit yang merepresentasik
 Buat file `http-compression.mjs`.
 
 ```js
-import http from 'node:http';
-import zlib from 'node:zlib';
-import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
+import http from "node:http";
+import zlib from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 
 // Create HTTP server with dynamic content-encoding negotiation
 const server = http.createServer(async (req, res) => {
-  const acceptEncoding = req.headers['accept-encoding'] || '';
+  const acceptEncoding = req.headers["accept-encoding"] || "";
   const payload = JSON.stringify({
-    status: 'success',
+    status: "success",
     timestamp: 1774300800000,
-    records: Array.from({ length: 50 }, (_, i) => ({ id: i + 1, metric: 'latency_ms', value: 12.5 })),
+    records: Array.from({ length: 50 }, (_, i) => ({
+      id: i + 1,
+      metric: "latency_ms",
+      value: 12.5,
+    })),
   });
 
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Vary', 'Accept-Encoding');
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Vary", "Accept-Encoding");
 
   // Negotiate best compression format: brotli (br) > gzip > deflate > plain
   let compressor = null;
   if (/\bbr\b/.test(acceptEncoding)) {
-    res.setHeader('Content-Encoding', 'br');
+    res.setHeader("Content-Encoding", "br");
     compressor = zlib.createBrotliCompress();
   } else if (/\bgzip\b/.test(acceptEncoding)) {
-    res.setHeader('Content-Encoding', 'gzip');
+    res.setHeader("Content-Encoding", "gzip");
     compressor = zlib.createGzip({ level: 6 });
   } else if (/\bdeflate\b/.test(acceptEncoding)) {
-    res.setHeader('Content-Encoding', 'deflate');
+    res.setHeader("Content-Encoding", "deflate");
     compressor = zlib.createDeflate();
   }
 
@@ -363,9 +446,9 @@ const server = http.createServer(async (req, res) => {
     }
   } catch (err) {
     if (!res.headersSent) {
-      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.writeHead(500, { "Content-Type": "text/plain" });
     }
-    res.end('Compression error');
+    res.end("Compression error");
   }
 });
 
@@ -374,24 +457,33 @@ server.listen(0, async () => {
 
   // Client 1: requests Brotli compression
   const brRes = await fetch(`http://localhost:${port}`, {
-    headers: { 'Accept-Encoding': 'br' },
+    headers: { "Accept-Encoding": "br" },
   });
-  console.log('Client 1 Content-Encoding:', brRes.headers.get('content-encoding'));
+  console.log(
+    "Client 1 Content-Encoding:",
+    brRes.headers.get("content-encoding"),
+  );
 
   // Client 2: requests Gzip compression
   const gzRes = await fetch(`http://localhost:${port}`, {
-    headers: { 'Accept-Encoding': 'gzip' },
+    headers: { "Accept-Encoding": "gzip" },
   });
-  console.log('Client 2 Content-Encoding:', gzRes.headers.get('content-encoding'));
+  console.log(
+    "Client 2 Content-Encoding:",
+    gzRes.headers.get("content-encoding"),
+  );
 
   // Client 3: no compression supported (identity)
   const plainRes = await fetch(`http://localhost:${port}`, {
-    headers: { 'Accept-Encoding': 'identity' },
+    headers: { "Accept-Encoding": "identity" },
   });
-  console.log('Client 3 Content-Encoding:', plainRes.headers.get('content-encoding') ?? 'identity');
+  console.log(
+    "Client 3 Content-Encoding:",
+    plainRes.headers.get("content-encoding") ?? "identity",
+  );
 
   const json = await gzRes.json();
-  console.log('Decompressed records count:', json.records.length);
+  console.log("Decompressed records count:", json.records.length);
 
   server.close();
 });
@@ -415,39 +507,50 @@ Decompressed records count: 50
 ## Pitfalls
 
 - Mengompresi ulang file biner media yang sudah terkompresi (seperti `.png`, `.jpg`, `.mp4`, atau `.zip`). Kompresi ulang pada data dengan entropi tinggi justru membuang siklus CPU dan sering kali memperbesar ukuran file.
+
   ```js
   // ❌ Incorrect: compressing already compressed media assets
-  // await gzip(imageBuffer);
+  await gzip(imageBuffer);
 
   // ✅ Correct: verify MIME type before initiating compression
   function isCompressible(mimeType) {
     return /^(text\/|application\/(json|javascript|xml|wasm))/.test(mimeType);
   }
-  console.log('Compress SVG:', isCompressible('text/xml')); // true
-  console.log('Compress JPEG:', isCompressible('image/jpeg')); // false
+  console.log("Compress SVG:", isCompressible("text/xml")); // true
+  console.log("Compress JPEG:", isCompressible("image/jpeg")); // false
   ```
+
 - Mendekompresi payload yang tidak tepercaya tanpa batas alokasi memori (kerentanan zip-bomb / memory exhaustion DoS).
+
   ```js
   // ❌ Incorrect: decompressing unlimited untrusted payload directly into memory
-  // const data = await gunzip(untrustedUntestedPayload);
+  const data = await gunzip(untrustedUntestedPayload);
 
   // ✅ Correct: define maxOutputLength to prevent memory exhaustion attacks
-  const safeBuffer = await gunzip(untrustedPayload, { maxOutputLength: 10 * 1024 * 1024 });
+  const safeBuffer = await gunzip(untrustedPayload, {
+    maxOutputLength: 10 * 1024 * 1024,
+  });
   ```
+
 - Menggunakan level kompresi maksimal (`level: 9` pada Gzip atau `BROTLI_MAX_QUALITY: 11` pada Brotli) untuk respons HTTP realtime. Peningkatan level maksimal menaikkan latensi CPU server hingga berkali-kali lipat hanya untuk penghematan byte yang sangat marjinal.
+
   ```js
   // ❌ Incorrect: maximum quality for dynamic on-the-fly HTTP responses
-  // const stream = zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 } });
+  const stream = zlib.createBrotliCompress({
+    params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 },
+  });
 
   // ✅ Correct: balanced compression level for high throughput runtime APIs
   const stream = zlib.createBrotliCompress({
     params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 },
   });
   ```
+
 - Mengalirkan stream menggunakan `.pipe()` manual tanpa penanganan error dan siklus hidup stream yang terisolasi. Jika terjadi kegagalan kompresi di tengah jalan, koneksi soket akan menggantung dan menyebabkan kebocoran memori (memory leak).
+
   ```js
   // ❌ Incorrect: legacy pipe does not clean up downstream streams on error
-  // readableStream.pipe(zlib.createGzip()).pipe(responseStream);
+  readableStream.pipe(zlib.createGzip()).pipe(responseStream);
 
   // ✅ Correct: use pipeline() for automatic backpressure management and stream teardown
   await pipeline(readableStream, zlib.createGzip(), responseStream);

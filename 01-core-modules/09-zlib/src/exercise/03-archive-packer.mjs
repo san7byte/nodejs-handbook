@@ -1,4 +1,5 @@
 import zlib from 'node:zlib';
+import { promisify } from 'node:util';
 
 /**
  * ============================================================================
@@ -65,6 +66,22 @@ import zlib from 'node:zlib';
  * └───────────┴─────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────┘
  */
 
+// Tabel lookup codec agar pemilihan kompresor/dekompresor seragam tanpa duplikasi if/else
+const codecs = {
+  gzip: {
+    compress: promisify(zlib.gzip),
+    decompress: promisify(zlib.gunzip),
+  },
+  brotli: {
+    compress: promisify(zlib.brotliCompress),
+    decompress: promisify(zlib.brotliDecompress),
+  },
+};
+
+// Helper validasi tipe data dan pengecekan aman agar properti warisan (prototype) tidak dianggap algoritma valid
+const isStringOrBuffer = (v) => typeof v === 'string' || Buffer.isBuffer(v);
+const isSupportedAlgorithm = (v) => Object.hasOwn(codecs, v);
+
 export class ArchivePacker {
   /**
    * Mengompresi payload data dan menyematkan metadata serta checksum CRC32.
@@ -74,7 +91,34 @@ export class ArchivePacker {
    * @returns {Promise<{ algorithm: string, originalSize: number, compressedSize: number, crc32: number, payload: Buffer }>}
    */
   static async pack(data, algorithm = 'gzip') {
-    throw new Error('Not implemented');
+    // Validasi tipe input: hanya menerima string atau Buffer
+    if (!isStringOrBuffer(data)) {
+      throw new TypeError('Data must be a string or Buffer');
+    }
+
+    // Tolak data kosong
+    if (data.length === 0) {
+      throw new Error('Data cannot be empty');
+    }
+
+    // Pastikan algoritma tersedia di tabel codecs
+    if (!isSupportedAlgorithm(algorithm)) {
+      throw new Error('Unsupported algorithm');
+    }
+
+    // Konversi ke Buffer agar panjang byte (originalSize) dan checksum CRC32 dihitung dari data biner asli
+    const original = Buffer.from(data);
+    const crc32 = zlib.crc32(original);
+    const payload = await codecs[algorithm].compress(original);
+
+    // Kembalikan paket terkompresi beserta metadata ukuran dan checksum integritas
+    return {
+      algorithm,
+      originalSize: original.length,
+      compressedSize: payload.length,
+      crc32,
+      payload,
+    };
   }
 
   /**
@@ -84,6 +128,41 @@ export class ArchivePacker {
    * @returns {Promise<Buffer>}
    */
   static async unpack(packet) {
-    throw new Error('Not implemented');
+    // Validasi struktur paket: wajib berupa objek non-null
+    if (!packet || typeof packet !== 'object') {
+      throw new TypeError('Invalid packet structure');
+    }
+
+    const { algorithm, originalSize, compressedSize, crc32, payload } = packet;
+
+    // Pastikan payload di dalam paket benar-benar berupa Buffer
+    if (!Buffer.isBuffer(payload)) {
+      throw new TypeError('Invalid payload Buffer');
+    }
+
+    // Verifikasi ukuran terkompresi sebelum melakukan dekompresi
+    if (payload.length !== compressedSize) {
+      throw new Error('Compressed size mismatch');
+    }
+
+    // Pastikan algoritma pada metadata termasuk codec yang didukung
+    if (!isSupportedAlgorithm(algorithm)) {
+      throw new Error('Unsupported algorithm');
+    }
+
+    // Dekompresi payload menggunakan dekoder yang sesuai dari tabel codecs
+    const decompressed = await codecs[algorithm].decompress(payload);
+
+    // Verifikasi integritas isi: cocokkan checksum CRC32 hasil dekompresi dengan metadata paket
+    if (zlib.crc32(decompressed) !== crc32) {
+      throw new Error('Checksum integrity check failed');
+    }
+
+    // Verifikasi ukuran asli: pastikan panjang byte hasil ekstraksi sesuai originalSize
+    if (decompressed.length !== originalSize) {
+      throw new Error('Original size mismatch');
+    }
+
+    return decompressed;
   }
 }

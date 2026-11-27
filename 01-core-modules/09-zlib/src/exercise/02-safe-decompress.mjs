@@ -1,4 +1,6 @@
 import zlib from 'node:zlib';
+import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
 
 /**
  * ============================================================================
@@ -55,6 +57,9 @@ import zlib from 'node:zlib';
  * └───────────┴─────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘
  */
 
+// Helper untuk memastikan batas memori adalah bilangan bulat positif
+const isValidMaxBytes = (v) => Number.isInteger(v) && v > 0;
+
 /**
  * Mendekompresi payload biner Gzip/Deflate dengan batas alokasi memori maksimum.
  *
@@ -63,5 +68,57 @@ import zlib from 'node:zlib';
  * @returns {Promise<Buffer>}
  */
 export async function safeDecompress(buffer, options = {}) {
-  throw new Error('Not implemented');
+  // Guard clause: pastikan input benar-benar instance Buffer
+  if (!Buffer.isBuffer(buffer)) {
+    throw new TypeError('Input must be a Buffer');
+  }
+
+  // Tolak Buffer kosong karena tidak ada data yang bisa didekompresi
+  if (buffer.length === 0) {
+    throw new Error('Buffer cannot be empty');
+  }
+
+  // Validasi opsi maxBytes hanya jika propertinya diberikan
+  const maxBytes = options?.maxBytes;
+
+  if (maxBytes !== undefined && !isValidMaxBytes(maxBytes)) {
+    throw new RangeError('maxBytes must be a positive integer');
+  }
+
+  // Siapkan batas ukuran (tanpa batas jika undefined) dan instance error penanda (sentinel)
+  const limit = maxBytes ?? Infinity;
+  const limitError = new Error('Decompressed size exceeds limit');
+  const chunks = [];
+  let totalBytes = 0;
+
+  try {
+    // Alirkan buffer lewat createUnzip (deteksi otomatis Gzip atau Deflate) lalu kumpulkan chunk
+    await pipeline(
+      Readable.from(buffer),
+      zlib.createUnzip(),
+      async (source) => {
+        for await (const chunk of source) {
+          totalBytes += chunk.length;
+
+          // Hentikan pipeline seketika jika total byte melewati batas (proteksi zip-bomb)
+          if (totalBytes > limit) {
+            throw limitError;
+          }
+
+          chunks.push(chunk);
+        }
+      },
+    );
+  } catch (error) {
+    // Jika error berasal dari pelanggaran batas maxBytes, teruskan error aslinya tanpa diubah
+    if (error === limitError) {
+      throw error;
+    }
+
+    // Error lain berasal dari stream zlib (data rusak/header tidak valid); simpan penyebab aslinya di cause
+    throw new Error('Corrupted or invalid compressed data', { cause: error });
+  }
+
+  // Gabungkan semua chunk menjadi satu Buffer dengan panjang totalBytes yang sudah diketahui pasti
+  return Buffer.concat(chunks, totalBytes);
 }
